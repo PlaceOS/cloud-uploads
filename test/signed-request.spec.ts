@@ -9,6 +9,7 @@ describe('SignedRequest', () => {
         (global as any).fetch = jest.fn(() =>
             Promise.resolve({
                 json: () => Promise.resolve({}),
+                text: () => Promise.resolve('{}'),
             })
         );
         mockXhr(200);
@@ -55,7 +56,7 @@ describe('SignedRequest', () => {
         expect(fetch).not.toBeCalled();
         const value = await request.updateStatus();
         expect(fetch).toBeCalled();
-        expect(value).toEqual({});
+        expect(value).toEqual('{}');
     });
 
     it('should allow aborting the upload', async () => {

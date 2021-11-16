@@ -1,6 +1,7 @@
 
 export * from './upload';
 export * from './api';
+export * from './helpers';
 
 /* istanbul ignore file */
 

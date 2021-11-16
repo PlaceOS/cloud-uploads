@@ -2,7 +2,7 @@ import { BehaviorSubject } from 'rxjs';
 import { CloudProvider } from './cloud-provider';
 import { getUploadProvider } from './providers.fn';
 import { getApiEndpoint } from './settings.fn';
-import { SignedRequest } from './signed-request';
+import { SignedRequest, _api_endpoint } from './signed-request';
 
 export type UploadStatus =
     | 'complete'
@@ -91,13 +91,16 @@ export class Upload {
         const state = this._state.getValue();
         if (!['complete', 'uploading', 'cancelled'].includes(state.status)) {
             if (parallel) this.parallel = parallel;
-            this._request = new SignedRequest(this, this._endpoint);
-            const resp = await this._request.initialiseSignedRequest();
-            const Provider = getUploadProvider(resp.residence) as any;
-            if (Provider) {
-                this._provider = new Provider(this._request, this);
-                this._state.next({ ...state, status: 'uploading' });
-            } else this.onError('No provider available to upload to');
+            if (!this._provider) {
+                this._request = new SignedRequest(this, this._endpoint);
+                const { residence } = await this._request.initialiseSignedRequest();
+                const Provider = getUploadProvider(residence) as any;
+                if (Provider) {
+                    this._provider = new Provider(this._request, this);
+                    this._state.next({ ...state, status: 'uploading' });
+                } else this.onError('No provider available to upload to');
+            }
+            this._provider?.start();
         }
     }
     /** Pause the uploading of the resource */

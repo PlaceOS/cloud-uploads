@@ -7,7 +7,7 @@ import * as sr from '../src/signed-request';
 jest.mock('../src/signed-request.ts');
 jest.mock('../src/providers.fn.ts');
 
-class Dummy {}
+class Dummy { start() {} }
 
 describe('Upload', () => {
     let upload: Upload;

@@ -5,6 +5,7 @@ import { Upload } from './upload';
 export let _api_endpoint = '';
 
 let _token = '';
+let _api_key = '';
 
 export class SignedRequest {
     private _upload_id: string;
@@ -16,6 +17,14 @@ export class SignedRequest {
         this._abort_ctrl.signal.addEventListener('abort', () =>
             this._dispose ? this._dispose() : ''
         );
+    }
+
+    public static setToken(token: string) {
+        _token = token;
+    }
+
+    public static setApiKey(key: string) {
+        _api_key = key;
     }
 
     public async initialiseSignedRequest(): Promise<ProviderResponse> {
@@ -31,6 +40,7 @@ export class SignedRequest {
         headers.append('Accept', 'application/json');
         headers.append('Content-Type', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
+        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
         const query = toQueryString(this._params);
         const resp = await fetch(
             `${this._endpoint}/new${query ? '?' + query : ''}`,
@@ -48,6 +58,7 @@ export class SignedRequest {
         headers.append('Accept', 'application/json');
         headers.append('Content-Type', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
+        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
         if (options.file_id) this._params.file_id = options.file_id;
         if (this._upload.mime_type) this._params.file_mime = options.mime_type;
         // TODO:: review this
@@ -95,6 +106,7 @@ export class SignedRequest {
         const headers = new Headers();
         headers.append('Accept', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
+        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
         const query = toQueryString({
             part: `${num}`,
             file_id: id,
@@ -115,11 +127,12 @@ export class SignedRequest {
         headers.append('Accept', 'application/json');
         headers.append('Content-Type', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
+        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
         const resp = await fetch(
             `${this._endpoint}/${encodeURIComponent(this._upload_id)}`,
-            { headers, method: 'POST', body: JSON.stringify(params), signal }
+            { headers, method: 'PUT', body: JSON.stringify(params), signal }
         );
-        return resp.json();
+        return resp.text();
     }
 
     public abort() {
@@ -131,6 +144,7 @@ export class SignedRequest {
         const headers = new Headers();
         headers.append('Accept', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
+        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
         if (this._upload_id) {
             return fetch(
                 `${this._endpoint}/${encodeURIComponent(this._upload_id)}`,

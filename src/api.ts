@@ -3,6 +3,7 @@ import { CloudProvider } from './cloud-provider';
 import { setupHashWorkers } from './hash-workers';
 import { registerUploadProvider } from './providers.fn';
 import { getApiEndpoint, setApiEndpoint } from './settings.fn';
+import { SignedRequest } from './signed-request';
 import { Type } from './types';
 import { Upload } from './upload';
 
@@ -16,6 +17,7 @@ export interface UploadServiceOptions {
     providers: Type<CloudProvider>[];
     metadata?: any;
     token?: string;
+    api_key?: string;
     endpoint?: string;
     worker_url?: string;
     worker_options?: WorkerOptions;
@@ -40,6 +42,8 @@ export function initialiseUploadService(
     _options = { ...DEFAULT_OPTIONS, ...options };
     if (_options.endpoint) setApiEndpoint(_options.endpoint);
     setupHashWorkers(_options.worker_url, _options.worker_options);
+    if (_options.token) SignedRequest.setToken(_options.token);
+    if (_options.api_key) SignedRequest.setApiKey(_options.api_key);
     addProviders(_options.providers);
 }
 /** Register a list of cloud upload providers to the system */
@@ -48,7 +52,7 @@ export function addProviders(providers: Type<CloudProvider>[]) {
 }
 /** Upload a list of files */
 export function uploadFiles(
-    files: File[],
+    files: (File | Blob)[],
     params: Record<string, string> = {}
 ): Upload[] {
     if (!getApiEndpoint()) {
@@ -58,20 +62,20 @@ export function uploadFiles(
     files.forEach((file) => {
         const upload: Upload = new Upload(
             file as any,
-            this.retries,
-            this.parallel,
+            _options.retries,
+            _options.parallel,
             params
         );
         uploads.push(upload);
         _uploads.push(upload);
         // Apply metadata
-        upload.metadata = this.metadata;
+        upload.metadata = _options.metadata;
         upload.status
             .pipe(first(({ status }) => status === 'complete'))
             .subscribe((_) => _onUploadComplete(upload));
         // Only autostart if we under our simultaneous limit
         if (_options.auto_start && _checkAutostart())
-            upload.resume(this.parallel);
+            upload.resume(_options.parallel);
     });
     return uploads;
 }

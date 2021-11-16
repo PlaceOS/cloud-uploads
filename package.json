@@ -1,15 +1,16 @@
 {
-    "name": "@placeos/uploads",
-    "version": "0.0.1-dev",
+    "name": "@placeos/cloud-uploads",
+    "version": "0.0.4-dev",
     "description": "Signed direct to cloud uploads",
-    "source": "src/cloud-uploads.ts",
-    "exports": {
-        "require": "./dist/cloud-uploads.cjs",
-        "default": "./dist/cloud-uploads.modern.js"
-    },
+    "source": "src/index.ts",
     "main": "./dist/cloud-uploads.cjs",
     "module": "./dist/cloud-uploads.module.js",
     "unpkg": "./dist/cloud-uploads.umd.js",
+    "typings": "dist/index.d.ts",
+    "files": [
+        "dist",
+        "src"
+    ],
     "scripts": {
         "build": "microbundle",
         "dev": "microbundle watch",
