@@ -1,7 +1,19 @@
-
-export * from './upload';
-export * from './api';
-export * from './helpers';
+export { UploadState, UploadStatus, Upload } from './upload';
+export {
+    UploadServiceOptions,
+    updateUploadMetadata,
+    addProviders,
+    uploadFiles,
+    listUploads,
+    removeUpload,
+    resumeUpload,
+    pauseAllUploads,
+    removeAllUploads,
+    resumeAllUploads,
+    initialiseUploadService,
+    removeCompletedUploads,
+} from './api';
+export { humanReadableByteCount, hexToBinary, toQueryString } from './helpers';
 
 /* istanbul ignore file */
 
