@@ -1,9 +1,9 @@
 {
     "name": "@placeos/cloud-uploads",
-    "version": "0.0.5-dev",
+    "version": "0.0.8-dev",
     "description": "Signed direct to cloud uploads",
     "source": "src/index.ts",
-    "main": "./dist/cloud-uploads.cjs",
+    "main": "./dist/cloud-uploads.js",
     "module": "./dist/cloud-uploads.module.js",
     "unpkg": "./dist/cloud-uploads.umd.js",
     "typings": "dist/index.d.ts",
