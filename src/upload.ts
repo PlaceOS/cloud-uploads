@@ -44,7 +44,9 @@ export class Upload {
         public parallel: number,
         public params: Record<string, any> = {},
         private _endpoint: string = getApiEndpoint(),
-    ) {}
+    ) {
+        this.mime_type = file?.type || this.mime_type;
+    }
 
     /** URL of the uploaded resource */
     public get access_url() {
