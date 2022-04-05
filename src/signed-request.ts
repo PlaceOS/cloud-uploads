@@ -29,9 +29,11 @@ export class SignedRequest {
 
     public async initialiseSignedRequest(): Promise<ProviderResponse> {
         const { signal } = this._abort_ctrl;
-        const { file } = this._upload;
+        const { file, mime_type } = this._upload;
         this._params.file_size = `${file.size}`;
         this._params.file_name = file.name;
+        if (mime_type && mime_type !== 'binary/octet-stream')
+            this._params.file_mime = mime_type;
         this._params = { ...this._params, ...this._upload.params };
         if ((file as any).dir_path?.length > 0) {
             this._params.file_path = (file as any).dir_path;
@@ -161,7 +163,9 @@ export class SignedRequest {
             const xhr = new XMLHttpRequest();
             // For whatever reason, this event has to bound before
             // the upload starts or it does not fire (at least on Chrome)
-            xhr.upload.addEventListener('progress', (evt: ProgressEvent) => on_progress(evt));
+            xhr.upload.addEventListener('progress', (evt: ProgressEvent) =>
+                on_progress(evt)
+            );
             xhr.addEventListener('load', (evt: ProgressEvent) => {
                 on_progress(evt);
                 // We are looking for a success response unless there is an expected response
