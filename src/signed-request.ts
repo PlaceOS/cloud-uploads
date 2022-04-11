@@ -197,16 +197,9 @@ export class SignedRequest {
             // Set the headers
             const headers = options.signature.headers;
             for (const i in headers) {
-                if (
-                    i in headers &&
-                    (i.toLowerCase() !== 'content-type' ||
-                        !this._upload.mime_type)
-                ) {
+                if (i in headers) {
                     xhr.setRequestHeader(i, headers[i]);
                 }
-            }
-            if (this._upload.mime_type) {
-                xhr.setRequestHeader('Content-Type', this._upload.mime_type);
             }
 
             // Allow the request to be cancelled (quack!)

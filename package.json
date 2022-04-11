@@ -1,6 +1,6 @@
 {
     "name": "@placeos/cloud-uploads",
-    "version": "0.1.0-dev",
+    "version": "0.1.1-dev",
     "description": "Signed direct to cloud uploads",
     "source": "src/index.ts",
     "main": "./dist/cloud-uploads.js",
