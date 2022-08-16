@@ -1,5 +1,5 @@
 
-import { ParallelHasher } from 'ts-md5/dist/parallel_hasher';
+import { ParallelHasher } from 'ts-md5';
 
 /* istanbul ignore file */
 
