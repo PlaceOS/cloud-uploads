@@ -18,7 +18,7 @@ export class Google extends CloudProvider {
                     return;
                 }
                 this._request
-                    .signUpload({ file_id: result.md5 })
+                    .create({ file_id: result.md5 })
                     .then((response) => {
                         this._strategy = response.type;
                         if (response.type === 'direct_upload') {
@@ -49,7 +49,7 @@ export class Google extends CloudProvider {
     }
 
     private _resume(request, firstChunk) {
-        this._request.signUpload(request).then((xhr) => {
+        this._request.signedRequest(request).then((xhr) => {
             if (request.type === 'status') {
                 if (xhr.status === request.expected) {
                     // We need to resume the upload

@@ -17,7 +17,7 @@ describe('SignedRequest', () => {
 
     afterEach(() => {
         (global as any).fetch.mockClear();
-        delete global.fetch;
+        delete (global as any).fetch;
     });
 
     it('should create object', () => {
@@ -26,14 +26,21 @@ describe('SignedRequest', () => {
 
     it('should initialise the signing request', async () => {
         expect(fetch).not.toBeCalled();
-        const value = await request.initialiseSignedRequest();
+        const value = await request.initialise();
         expect(fetch).toBeCalled();
         expect(value).toEqual({});
     });
 
-    it('should allow the signing the upload', async () => {
+    it('should allow the creating a signed request for the upload', async () => {
         expect(fetch).not.toBeCalled();
-        const value = await request.signUpload({});
+        const value = await request.create({});
+        expect(fetch).toBeCalled();
+        expect(value).toEqual({});
+    });
+
+    it('should allow the creating a signed request for the upload', async () => {
+        expect(fetch).not.toBeCalled();
+        const value = await request.create({});
         expect(fetch).toBeCalled();
         expect(value).toEqual({});
     });

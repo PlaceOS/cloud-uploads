@@ -7,6 +7,20 @@ export let _api_endpoint = '';
 let _token = '';
 let _api_key = '';
 
+export interface SignedReponse {
+    type: 'direct_upload' | 'chunked_upload' | 'parts' | 'status';
+    upload_id: string;
+    residence: string;
+    part_list?: number[];
+    part_data?: any;
+    data?: any;
+    signature?: {
+        url: string;
+        verb: string;
+        headers: Record<string, string>;
+    };
+}
+
 export class SignedRequest {
     private _upload_id: string;
     private _params: Record<string, string> = {};
@@ -27,7 +41,11 @@ export class SignedRequest {
         _api_key = key;
     }
 
-    public async initialiseSignedRequest(): Promise<ProviderResponse> {
+    public get encoded_id() {
+        return encodeURIComponent(`${this._upload_id || ''}`);
+    }
+
+    public async initialise(): Promise<ProviderResponse> {
         const { signal } = this._abort_ctrl;
         const { file, mime_type } = this._upload;
         this._params.file_size = `${file.size}`;
@@ -38,11 +56,7 @@ export class SignedRequest {
         if ((file as any).dir_path?.length > 0) {
             this._params.file_path = (file as any).dir_path;
         }
-        const headers = new Headers();
-        headers.append('Accept', 'application/json');
-        headers.append('Content-Type', 'application/json');
-        if (_token) headers.append('Authorization', `Bearer ${_token}`);
-        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
+        const headers = this.base_request_headers;
         const query = toQueryString(this._params);
         const resp = await fetch(
             `${this._endpoint}/new${query ? '?' + query : ''}`,
@@ -54,18 +68,16 @@ export class SignedRequest {
         return resp.json();
     }
 
-    public async signUpload(options: Record<string, string>) {
+    public async create(
+        options: Record<string, string>
+    ): Promise<SignedReponse> {
         const { signal } = this._abort_ctrl;
-        const headers = new Headers();
-        headers.append('Accept', 'application/json');
-        headers.append('Content-Type', 'application/json');
-        if (_token) headers.append('Authorization', `Bearer ${_token}`);
-        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
+        const headers = this.base_request_headers;
         if (options.file_id) this._params.file_id = options.file_id;
         if (this._upload.mime_type) this._params.file_mime = options.mime_type;
         // TODO:: review this
         if (options.parameters) this._params.parameters = options.parameters;
-        const resp = await fetch(this._endpoint, {
+        const resp = await fetch(`${this._endpoint}`, {
             body: JSON.stringify(this._params),
             method: 'POST',
             headers,
@@ -76,23 +88,77 @@ export class SignedRequest {
         return data;
     }
 
+    public async sign(
+        part_number: number | string,
+        part_id: string = ''
+    ): Promise<SignedReponse> {
+        if (!this._upload_id)
+            throw new Error('Upload resource not initialised');
+        const { signal } = this._abort_ctrl;
+        const headers = this.base_request_headers;
+        const search = new URLSearchParams();
+        search.set('part', part_number.toString());
+        if (part_id) search.set('file_id', encodeURIComponent(part_id));
+        const resp = await fetch(
+            `${this._endpoint}/${this.encoded_id}/edit?${search.toString()}`,
+            {
+                method: 'GET',
+                headers,
+                signal,
+            }
+        );
+        return await resp.json();
+    }
+
+    public async update(params: Record<string, any> = {}) {
+        if (!this._upload_id)
+            throw new Error('Upload resource not initialised');
+        const { signal } = this._abort_ctrl;
+        const headers = this.base_request_headers;
+        const resp = await fetch(`${this._endpoint}/${this.encoded_id}`, {
+            body: JSON.stringify(params),
+            method: 'PUT',
+            headers,
+            signal,
+        });
+        return await resp.json();
+    }
+
+    public async signedRequest(req: SignedReponse) {
+        const resp = await fetch(req.signature.url, {
+            body: req.data,
+            method: req.signature.verb,
+            headers: req.signature.headers,
+        });
+        const data: any = { body: await resp.text(), responseXML: null };
+        if (resp.headers.get('content-type').toLowerCase().includes('xml')) {
+            data.responseXML = new window.DOMParser().parseFromString(
+                data.body,
+                'text/xml'
+            );
+        }
+        return data;
+    }
+
     public async signNextChunk(
         num: number,
         id: string,
         parts: number[],
         data: any = null
     ) {
+        if (!this._upload_id)
+            throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
-        const headers = new Headers();
         const body: Record<string, any> = { part_list: parts };
         if (data) body.part_data = data;
+        const headers = this.base_request_headers;
         const query = toQueryString({
             part: `${num}`,
             file_id: id,
             file_mime: this._upload.mime_type,
         });
         const resp = await fetch(
-            `${this._endpoint}${query ? '?' + query : ''}`,
+            `${this._endpoint}/${this.encoded_id}${query ? '?' + query : ''}`,
             {
                 body: JSON.stringify(body),
                 method: 'PUT',
@@ -100,15 +166,12 @@ export class SignedRequest {
                 signal,
             }
         );
-        return resp.json();
+        return await resp.json();
     }
 
     public async signChunk(num: number, id: string = null) {
         const { signal } = this._abort_ctrl;
-        const headers = new Headers();
-        headers.append('Accept', 'application/json');
-        if (_token) headers.append('Authorization', `Bearer ${_token}`);
-        else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
+        const headers = this.base_request_headers;
         const query = toQueryString({
             part: `${num}`,
             file_id: id,
@@ -120,25 +183,34 @@ export class SignedRequest {
                 signal,
             }
         );
-        return resp.json();
+        return await resp.json();
     }
 
     public async updateStatus(params: Record<string, any> = {}) {
+        if (!this._upload_id)
+            throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
+        const headers = this.base_request_headers;
+        const resp = await fetch(`${this._endpoint}/${this.encoded_id}`, {
+            headers,
+            method: 'PUT',
+            body: JSON.stringify(params),
+            signal,
+        });
+        return await resp.json();
+    }
+
+    public abort() {
+        this._abort_ctrl.abort();
+    }
+
+    private get base_request_headers() {
         const headers = new Headers();
         headers.append('Accept', 'application/json');
         headers.append('Content-Type', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
         else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
-        const resp = await fetch(
-            `${this._endpoint}/${encodeURIComponent(this._upload_id)}`,
-            { headers, method: 'PUT', body: JSON.stringify(params), signal }
-        );
-        return resp.text();
-    }
-
-    public abort() {
-        this._abort_ctrl.abort();
+        return headers;
     }
 
     public destroy() {
@@ -148,10 +220,10 @@ export class SignedRequest {
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
         else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
         if (this._upload_id) {
-            return fetch(
-                `${this._endpoint}/${encodeURIComponent(this._upload_id)}`,
-                { headers, method: 'DELETE' }
-            );
+            return fetch(`${this._endpoint}/${this.encoded_id}`, {
+                headers,
+                method: 'DELETE',
+            });
         }
     }
 

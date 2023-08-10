@@ -25,7 +25,7 @@ export class Upload {
     private _state = new BehaviorSubject<UploadState>({
         status: 'waiting',
         progress: 0,
-        uploaded: 0
+        uploaded: 0,
     });
     private _request?: SignedRequest;
     private _provider?: CloudProvider;
@@ -43,7 +43,7 @@ export class Upload {
         public retries: number,
         public parallel: number,
         public params: Record<string, any> = {},
-        private _endpoint: string = getApiEndpoint(),
+        private _endpoint: string = getApiEndpoint()
     ) {
         this.mime_type = file?.type || this.mime_type;
     }
@@ -51,7 +51,7 @@ export class Upload {
     /** URL of the uploaded resource */
     public get access_url() {
         return this._access_url;
-    } 
+    }
     /** Whether resource is waiting to be uploaded */
     public get waiting() {
         return this._state.getValue()?.status === 'waiting';
@@ -75,8 +75,8 @@ export class Upload {
             ...state,
             status: 'uploading',
             uploaded: bytes_complete,
-            progress: Math.floor(bytes_complete / this.file.size * 1000) / 10
-        })
+            progress: Math.floor((bytes_complete / this.file.size) * 1000) / 10,
+        });
     }
     /** @hidden */
     public onComplete() {
@@ -95,7 +95,7 @@ export class Upload {
             if (parallel) this.parallel = parallel;
             if (!this._provider) {
                 this._request = new SignedRequest(this, this._endpoint);
-                const { residence } = await this._request.initialiseSignedRequest();
+                const { residence } = await this._request.initialise();
                 const Provider = getUploadProvider(residence) as any;
                 if (Provider) {
                     this._provider = new Provider(this._request, this);

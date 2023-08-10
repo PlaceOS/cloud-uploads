@@ -34,7 +34,7 @@ export class Azure extends CloudProvider {
                 }
 
                 this._request
-                    .signUpload({ file_id: result.md5 })
+                    .create({ file_id: result.md5 })
                     .then((response) => {
                         this._strategy = response.type;
                         if (response.type === 'direct_upload') {
@@ -170,10 +170,10 @@ export class Azure extends CloudProvider {
             ) {
                 // This is the final commit
                 this._finishing = true;
-                this._request.signChunk('finish' as any).then((request) => {
+                this._request.sign('finish').then((request) => {
                     request.data = this._generatePartManifest();
                     this._request
-                        .signUpload(request as any)
+                        .signedRequest(request as any)
                         .then(
                             this._finalise.bind(this),
                             this._onError.bind(this)

@@ -25,7 +25,7 @@ export abstract class CloudProvider {
     protected _progress: Record<string, { loaded: number; total: number }> = {};
     protected _current_parts: number[] = [];
     protected _pending_parts: number[] = [];
-    protected _last_part: number;
+    protected _last_part: number = 0;
     protected _memoization: any = {};
     protected _finishing = false;
 
@@ -118,6 +118,7 @@ export abstract class CloudProvider {
     }
     /* istanbul ignore next */
     protected _onError(reason: string) {
+        console.error('Error:', reason);
         this.pause();
         this._upload.onError(reason);
     }
@@ -157,7 +158,7 @@ export abstract class CloudProvider {
     }
     /* istanbul ignore next */
     protected _getPartData() {
-        const list = this._currentParts();
+        const list = this._currentParts().filter((_) => typeof _ === 'number');
         const data = [];
         list.forEach((num) => {
             const details = this._memoization[`${num}`];
