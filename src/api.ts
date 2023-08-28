@@ -53,7 +53,7 @@ export function addProviders(providers: Type<CloudProvider>[]) {
 /** Upload a list of files */
 export function uploadFiles(
     files: (File | Blob)[],
-    params: Record<string, string> = {}
+    params: Record<string, any> = {}
 ): Upload[] {
     if (!getApiEndpoint()) {
         throw 'No API endpoint set';

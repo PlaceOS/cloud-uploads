@@ -38,6 +38,10 @@ export class Upload {
     public mime_type = 'binary/octet-stream';
     public metadata: any;
 
+    public get id() {
+        return this._request?.upload_id;
+    }
+
     constructor(
         public file: any,
         public retries: number,

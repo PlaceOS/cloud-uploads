@@ -7,6 +7,15 @@ export let _api_endpoint = '';
 let _token = '';
 let _api_key = '';
 
+export interface SignedRequestOptions {
+    file_id?: string;
+    mime_type?: string;
+    parameters?: Record<string, any>;
+    permissions?: string;
+    public?: boolean;
+    expires?: number;
+}
+
 export interface SignedReponse {
     type: 'direct_upload' | 'chunked_upload' | 'parts' | 'status';
     upload_id: string;
@@ -22,8 +31,8 @@ export interface SignedReponse {
 }
 
 export class SignedRequest {
-    private _upload_id: string;
-    private _params: Record<string, string> = {};
+    public upload_id: string;
+    private _params: Record<string, any> = {};
     private _abort_ctrl = new AbortController();
     private _dispose?: () => void;
 
@@ -42,7 +51,7 @@ export class SignedRequest {
     }
 
     public get encoded_id() {
-        return encodeURIComponent(`${this._upload_id || ''}`);
+        return encodeURIComponent(`${this.upload_id || ''}`);
     }
 
     public async initialise(): Promise<ProviderResponse> {
@@ -68,15 +77,16 @@ export class SignedRequest {
         return resp.json();
     }
 
-    public async create(
-        options: Record<string, string>
-    ): Promise<SignedReponse> {
+    public async create(options: SignedRequestOptions): Promise<SignedReponse> {
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         if (options.file_id) this._params.file_id = options.file_id;
         if (this._upload.mime_type) this._params.file_mime = options.mime_type;
         // TODO:: review this
         if (options.parameters) this._params.parameters = options.parameters;
+        if (options.permissions) this._params.permissions = options.permissions;
+        if (options.public) this._params.public = options.public;
+        if (options.expires) this._params.expires = options.expires || 0;
         const resp = await fetch(`${this._endpoint}`, {
             body: JSON.stringify(this._params),
             method: 'POST',
@@ -84,7 +94,7 @@ export class SignedRequest {
             signal,
         });
         const data = await resp.json();
-        this._upload_id = data.upload_id;
+        this.upload_id = data.upload_id;
         return data;
     }
 
@@ -92,8 +102,7 @@ export class SignedRequest {
         part_number: number | string,
         part_id: string = ''
     ): Promise<SignedReponse> {
-        if (!this._upload_id)
-            throw new Error('Upload resource not initialised');
+        if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         const search = new URLSearchParams();
@@ -111,8 +120,7 @@ export class SignedRequest {
     }
 
     public async update(params: Record<string, any> = {}) {
-        if (!this._upload_id)
-            throw new Error('Upload resource not initialised');
+        if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         const resp = await fetch(`${this._endpoint}/${this.encoded_id}`, {
@@ -146,8 +154,7 @@ export class SignedRequest {
         parts: number[],
         data: any = null
     ) {
-        if (!this._upload_id)
-            throw new Error('Upload resource not initialised');
+        if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
         const body: Record<string, any> = { part_list: parts };
         if (data) body.part_data = data;
@@ -187,8 +194,7 @@ export class SignedRequest {
     }
 
     public async updateStatus(params: Record<string, any> = {}) {
-        if (!this._upload_id)
-            throw new Error('Upload resource not initialised');
+        if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         const resp = await fetch(`${this._endpoint}/${this.encoded_id}`, {
@@ -219,7 +225,7 @@ export class SignedRequest {
         headers.append('Accept', 'application/json');
         if (_token) headers.append('Authorization', `Bearer ${_token}`);
         else if (_api_key) headers.append('X-API-Key', `${_api_key}`);
-        if (this._upload_id) {
+        if (this.upload_id) {
             return fetch(`${this._endpoint}/${this.encoded_id}`, {
                 headers,
                 method: 'DELETE',
