@@ -30,7 +30,7 @@ function bootstrap() {
     initialiseUploadService({
         auto_start: true,
         token: 'access_token',
-        endpoint: '/api/files/v1/uploads',
+        endpoint: '/api/engine/v2/uploads',
         worker_url: 'assets/md5_worker.js',
         providers: [Amazon] as any
     });

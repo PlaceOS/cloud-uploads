@@ -1,5 +1,4 @@
-
-let _api_endpoint = '/api/files/v1/uploads';
+let _api_endpoint = '/api/engine/v2/uploads';
 
 export function getApiEndpoint() {
     return _api_endpoint;
