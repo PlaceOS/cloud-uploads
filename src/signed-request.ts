@@ -139,12 +139,12 @@ export class SignedRequest {
             headers: req.signature.headers,
         });
         const data: any = { body: await resp.text(), responseXML: null };
-        if (resp.headers.get('content-type').toLowerCase().includes('xml')) {
+        try {
             data.responseXML = new window.DOMParser().parseFromString(
                 data.body,
                 'text/xml'
             );
-        }
+        } catch (e) {}
         return data;
     }
 
