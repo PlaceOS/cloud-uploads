@@ -6,16 +6,18 @@
     "main": "./dist/index.umd.cjs",
     "module": "./dist/index.js",
     "types": "./dist/index.d.ts",
-    "exports": {
-        ".": {
-            "import": "./dist/index.js",
-            "require": "./dist/index.umd.cjs"
-        }
-    },
+    "keywords": [
+        "placeos",
+        "browser",
+        "api"
+    ],
     "files": [
         "dist",
         "src"
     ],
+    "engines": {
+        "node": ">=20"
+    },
     "scripts": {
         "dev": "vite",
         "build": "tsc && vite build",
