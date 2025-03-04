@@ -1,4 +1,3 @@
-
 import { ParallelHasher } from 'ts-md5';
 
 /* istanbul ignore file */
@@ -11,8 +10,11 @@ let _index = -1;
 export const MD5_WORKER_URL: string = '/node_modules/ts-md5/dist/md5_worker.js';
 
 /** Initialise hash workers */
-export function setupHashWorkers(url: string = MD5_WORKER_URL, options?: WorkerOptions) {
-    if (WORKERS?.length > 0) WORKERS.forEach(_ => _.terminate());
+export function setupHashWorkers(
+    url: string = MD5_WORKER_URL,
+    options?: WorkerOptions,
+) {
+    if (WORKERS?.length > 0) WORKERS.forEach((_) => _.terminate());
     WORKERS = [];
     for (let i = 0; i < WORKER_COUNT; i += 1) {
         WORKERS.push(new ParallelHasher(url, options));
@@ -25,4 +27,3 @@ export function nextHashWorker() {
     _index = _index % WORKER_COUNT;
     return WORKERS[_index];
 }
-

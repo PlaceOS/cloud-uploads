@@ -1,6 +1,7 @@
-import { CloudProvider, State } from 'src/cloud-provider';
-import { nextHashWorker } from 'src/hash-workers';
-import { hexToBinary } from 'src/helpers';
+import { CloudProvider, State } from '../cloud-provider';
+import { nextHashWorker } from '../hash-workers';
+import { hexToBinary } from '../helpers';
+import { SignedReponse } from '../signed-request';
 
 /* istanbul ignore file */
 
@@ -64,7 +65,7 @@ export class Azure extends CloudProvider {
                     }
                     data = this._file.slice(
                         (part - 1) * this._partSize,
-                        endbyte
+                        endbyte,
                     );
                 } else {
                     data = this._file;
@@ -73,7 +74,7 @@ export class Azure extends CloudProvider {
             },
             (data) => {
                 // We hash in here as not all cloud providers may use MD5
-                const hasher = nextHashWorker();
+                const hasher = nextHashWorker() as any;
                 // Hash the part and return the result
                 return hasher.hash(data).then((md5: string) => {
                     return {
@@ -81,11 +82,14 @@ export class Azure extends CloudProvider {
                         part,
                     };
                 });
-            }
+            },
         );
     }
 
-    private _resume(request = null, firstChunk = null) {
+    private _resume(
+        request: SignedReponse | null = null,
+        firstChunk: any = null,
+    ) {
         let i: number;
         if (request) {
             if (request.type === 'parts') {
@@ -113,11 +117,11 @@ export class Azure extends CloudProvider {
                                 this._nextPart();
                             }
                         },
-                        function (reason) {
+                        (reason) => {
                             // We should start from the beginning
                             this._restart();
                             this._onError(reason);
-                        }
+                        },
                     );
             }
         } else {
@@ -165,8 +169,8 @@ export class Azure extends CloudProvider {
             }, this._onError.bind(this));
         } else {
             if (
-                this._currentParts.length === 1 &&
-                this._currentParts[0] === partNum
+                this._currentParts().length === 1 &&
+                this._currentParts()[0] === partNum
             ) {
                 // This is the final commit
                 this._finishing = true;
@@ -176,7 +180,7 @@ export class Azure extends CloudProvider {
                         .signedRequest(request as any)
                         .then(
                             this._finalise.bind(this),
-                            this._onError.bind(this)
+                            this._onError.bind(this),
                         );
                 }, this._onError.bind(this));
             } else if (!this._finishing) {
@@ -198,7 +202,7 @@ export class Azure extends CloudProvider {
         }
     }
 
-    private _setPart(request, partInfo) {
+    private _setPart(request: any, partInfo: any) {
         const monitor = this._makeRequest(partInfo, request);
         monitor.then(() => {
             this._completePart(partInfo.part);
@@ -206,7 +210,7 @@ export class Azure extends CloudProvider {
         }, this._onError.bind(this));
     }
 
-    private _direct(request, partInfo) {
+    private _direct(request: any, partInfo: any) {
         const monitor = this._makeRequest(partInfo, request);
         this._direct_upload = true;
         monitor.then(() => this._finalise(), this._onError.bind(this));

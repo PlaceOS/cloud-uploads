@@ -37,7 +37,7 @@ let _options: UploadServiceOptions = DEFAULT_OPTIONS;
 let _uploads: Upload[] = [];
 /** Initialise the upload service library */
 export function initialiseUploadService(
-    options: Partial<UploadServiceOptions> = {}
+    options: Partial<UploadServiceOptions> = {},
 ) {
     _options = { ...DEFAULT_OPTIONS, ...options };
     if (_options.endpoint) setApiEndpoint(_options.endpoint);
@@ -53,7 +53,7 @@ export function addProviders(providers: Type<CloudProvider>[]) {
 /** Upload a list of files */
 export function uploadFiles(
     files: (File | Blob)[],
-    params: Record<string, any> = {}
+    params: Record<string, any> = {},
 ): Upload[] {
     if (!getApiEndpoint()) {
         throw 'No API endpoint set';
@@ -64,7 +64,7 @@ export function uploadFiles(
             file as any,
             _options.retries,
             _options.parallel,
-            params
+            params,
         );
         uploads.push(upload);
         _uploads.push(upload);

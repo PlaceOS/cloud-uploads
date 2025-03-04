@@ -1,27 +1,44 @@
-
-import * as api from '../src/api';
-import * as workers from '../src/hash-workers';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { getApiEndpoint } from '../src/settings.fn';
 import { Upload } from '../src/upload';
 
-describe('API Methods', () => {
+import * as api from '../src/api';
+import * as workers from '../src/hash-workers';
+import { mockXhr } from './helper.fn';
 
+describe('API Methods', () => {
+    beforeEach(() => {
+        (globalThis.fetch as any) = vi.fn().mockImplementation(
+            async () =>
+                ({
+                    status: 200,
+                    ok: true,
+                    json: async () => ({}),
+                    text: async () => '{}',
+                    headers: {
+                        Authorisation: 'test',
+                        'x-total-count': 100,
+                    },
+                }) as any,
+        );
+        mockXhr(200);
+    });
     afterEach(() => api.removeAllUploads());
 
-    it('should allow initialising the service', () => {
-        const spy = jest.spyOn(api, 'addProviders').mockImplementation();
-        jest.spyOn(workers, 'setupHashWorkers').mockImplementation();
+    test('should allow initialising the service', () => {
+        const spy = vi.spyOn(api, 'addProviders').mockImplementation(() => {});
+        vi.spyOn(workers, 'setupHashWorkers').mockImplementation(() => {});
         api.initialiseUploadService();
         api.initialiseUploadService({ endpoint: '/test' });
         expect(getApiEndpoint()).toBe('/test');
         spy.mockRestore();
     });
 
-    it('should allow adding providers', () => {
+    test('should allow adding providers', () => {
         api.addProviders([{ lookup: 'test' }] as any);
     });
 
-    it('should allow listing uploads', () => {
+    test('should allow listing uploads', () => {
         let list = api.listUploads();
         expect(list).toHaveLength(0);
         api.uploadFiles([new File([], 'test.txt')]);
@@ -29,33 +46,39 @@ describe('API Methods', () => {
         expect(list).toHaveLength(1);
     });
 
-    it('should allow uploading files', () => {
+    test('should allow uploading files', () => {
         api.uploadFiles([new File([], 'test.txt')]);
     });
 
-    it('should allow pausing all uploads', () => {
+    test('should allow pausing all uploads', () => {
         api.uploadFiles([new File([], 'test.txt')]);
         api.pauseAllUploads();
     });
-    it('should allow resuming an upload', () => {
+
+    test('should allow resuming an upload', () => {
         api.uploadFiles([new File([], 'test.txt')]);
         api.resumeUpload(new Upload(new File([], 'test.txt'), 1, 1));
     });
-    it('should allow resuming all uploads', () => {
+
+    test('should allow resuming all uploads', () => {
         api.uploadFiles([new File([], 'test.txt')]);
         api.resumeAllUploads();
     });
-    it('should allow updating upload metadata', () => {
+
+    test('should allow updating upload metadata', () => {
         api.uploadFiles([new File([], 'test.txt')]);
         api.resumeAllUploads();
     });
-    it('should allow removing an upload', () => {});
-    it('should allow removing all uploads', () => {
+
+    test('should allow removing an upload', () => {});
+
+    test('should allow removing all uploads', () => {
         api.uploadFiles([new File([], 'test.txt')]);
         api.removeAllUploads();
     });
-    it('should allow removing all completed uploads', () => {
+
+    test('should allow removing all completed uploads', () => {
         api.uploadFiles([new File([], 'test.txt')]);
         api.removeCompletedUploads();
     });
-})
+});

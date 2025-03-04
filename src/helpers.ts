@@ -1,4 +1,3 @@
-
 export function humanReadableByteCount(bytes: number, si: boolean = false) {
     const unit = si ? 1000.0 : 1024.0;
     if (bytes < unit) {
@@ -23,12 +22,16 @@ export function hexToBinary(input: string) {
  * Convert map into a query string
  * @param map Key value pairs to convert
  */
- export function toQueryString(map: Record<string, any>) {
+export function toQueryString(map: Record<string, any>) {
     let str = '';
     if (map) {
         for (const key in map) {
-            if (map.hasOwnProperty(key) && map[key] !== undefined && map[key] !== null) {
-                str += `${(str ? '&' : '')}${key}=${encodeURIComponent(map[key])}`;
+            if (
+                map.hasOwnProperty(key) &&
+                map[key] !== undefined &&
+                map[key] !== null
+            ) {
+                str += `${str ? '&' : ''}${key}=${encodeURIComponent(map[key])}`;
             }
         }
     }

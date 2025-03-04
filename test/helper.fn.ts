@@ -1,31 +1,32 @@
+import { vi } from 'vitest';
 /* istanbul ignore file */
 
 export function mockXhr(
     status: number,
-    data?: { [key: string]: string }[]
+    data?: { [key: string]: string }[],
 ): void {
     const xhrMockObj = {
-        open: jest.fn(),
-        send: jest.fn(),
-        setRequestHeader: jest.fn(),
+        open: vi.fn(),
+        send: vi.fn(),
+        setRequestHeader: vi.fn(),
         readyState: 4,
         status,
-        addEventListener: jest.fn((_, fn) =>
-            status === 200 && _ !== 'error' ? setTimeout(() => fn({}), 30) : ''
+        addEventListener: vi.fn((_, fn) =>
+            status === 200 && _ !== 'error' ? setTimeout(() => fn({}), 30) : '',
         ),
         upload: {
-            addEventListener: jest.fn((_, fn) =>
+            addEventListener: vi.fn((_, fn) =>
                 status === 200 && _ !== 'error'
                     ? setTimeout(() => fn({}), 20)
-                    : ''
+                    : '',
             ),
         },
-        onreadystatechange: jest.fn(),
+        onreadystatechange: vi.fn(),
         response: JSON.stringify(data),
     };
     const xhrMockClass = () => xhrMockObj;
     // @ts-ignore
-    window.XMLHttpRequest = jest.fn().mockImplementation(xhrMockClass);
+    globalThis.XMLHttpRequest = vi.fn().mockImplementation(xhrMockClass);
     // @ts-ignore
     setTimeout(() => xhrMockObj['onreadystatechange'](), 0);
 }

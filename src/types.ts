@@ -1,4 +1,3 @@
-
 /** Response from Condo API requests */
 export interface ProviderResponse {
     /** Name of the service provider to upload to */

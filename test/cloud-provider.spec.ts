@@ -1,9 +1,10 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { CloudProvider, State } from '../src/cloud-provider';
 
 class TestCloudProvider extends CloudProvider {
     _start() {
         this.state = State.Uploading;
-        this._strategy = null;
+        this._strategy = '';
     }
 }
 
@@ -14,32 +15,32 @@ describe('CloudProvider', () => {
 
     beforeEach(() => {
         request = {
-            abort: jest.fn(),
-            destroy: jest.fn(),
-            performSignedRequest: jest.fn(),
-            updateStatus: jest.fn(async () => {}),
+            abort: vi.fn(),
+            destroy: vi.fn(),
+            performSignedRequest: vi.fn(),
+            updateStatus: vi.fn(async () => {}),
         };
         upload = {
             file: {},
-            onError: jest.fn(),
-            onComplete: jest.fn(),
-            onProgress: jest.fn(),
+            onError: vi.fn(),
+            onComplete: vi.fn(),
+            onProgress: vi.fn(),
         };
         provider = new TestCloudProvider(request, upload);
     });
 
-    it('should create object', () => {
+    test('should create object', () => {
         expect(provider).toBeInstanceOf(CloudProvider);
     });
 
-    it('should allow starting the upload', () => {
+    test('should allow starting the upload', () => {
         provider.start();
     });
-    it('should allow pausing the upload', () => {
+    test('should allow pausing the upload', () => {
         provider.start();
         provider.pause();
     });
-    it('should allow cleaning up the upload', () => {
+    test('should allow cleaning up the upload', () => {
         provider.start();
         provider.destroy();
     });

@@ -31,14 +31,17 @@ export interface SignedReponse {
 }
 
 export class SignedRequest {
-    public upload_id: string;
+    public upload_id: string = '';
     private _params: Record<string, any> = {};
     private _abort_ctrl = new AbortController();
     private _dispose?: () => void;
 
-    constructor(private _upload: Upload, private _endpoint: string) {
+    constructor(
+        private _upload: Upload,
+        private _endpoint: string,
+    ) {
         this._abort_ctrl.signal.addEventListener('abort', () =>
-            this._dispose ? this._dispose() : ''
+            this._dispose ? this._dispose() : '',
         );
     }
 
@@ -72,7 +75,7 @@ export class SignedRequest {
             {
                 headers,
                 signal,
-            }
+            },
         );
         return resp.json();
     }
@@ -100,7 +103,7 @@ export class SignedRequest {
 
     public async sign(
         part_number: number | string,
-        part_id: string = ''
+        part_id: string = '',
     ): Promise<SignedReponse> {
         if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
@@ -114,7 +117,7 @@ export class SignedRequest {
                 method: 'GET',
                 headers,
                 signal,
-            }
+            },
         );
         return await resp.json();
     }
@@ -133,16 +136,16 @@ export class SignedRequest {
     }
 
     public async signedRequest(req: SignedReponse) {
-        const resp = await fetch(req.signature.url, {
+        const resp = await fetch(req.signature!.url, {
             body: req.data,
-            method: req.signature.verb,
-            headers: req.signature.headers,
+            method: req.signature!.verb,
+            headers: req.signature!.headers,
         });
         const data: any = { body: await resp.text(), responseXML: null };
         try {
             data.responseXML = new window.DOMParser().parseFromString(
                 data.body,
-                'text/xml'
+                'text/xml',
             );
         } catch (e) {}
         return data;
@@ -152,7 +155,7 @@ export class SignedRequest {
         num: number,
         id: string,
         parts: number[],
-        data: any = null
+        data: any = null,
     ) {
         if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
@@ -171,12 +174,12 @@ export class SignedRequest {
                 method: 'PUT',
                 headers,
                 signal,
-            }
+            },
         );
         return await resp.json();
     }
 
-    public async signChunk(num: number, id: string = null) {
+    public async signChunk(num: number, id: string | null = null) {
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         const query = toQueryString({
@@ -188,7 +191,7 @@ export class SignedRequest {
             {
                 headers,
                 signal,
-            }
+            },
         );
         return await resp.json();
     }
@@ -231,18 +234,19 @@ export class SignedRequest {
                 method: 'DELETE',
             });
         }
+        return;
     }
 
     public performSignedRequest(
         options: ExtendedProviderResponse,
-        on_progress: (e) => void = () => {}
+        on_progress: (e: any) => void = () => {},
     ) {
         return new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
             // For whatever reason, this event has to bound before
             // the upload starts or it does not fire (at least on Chrome)
             xhr.upload.addEventListener('progress', (evt: ProgressEvent) =>
-                on_progress(evt)
+                on_progress(evt),
             );
             xhr.addEventListener('load', (evt: ProgressEvent) => {
                 on_progress(evt);
@@ -255,21 +259,21 @@ export class SignedRequest {
                 } else reject(`${xhr.status}: ${xhr.statusText}`);
             });
 
-            const on_error = (err) => {
+            const on_error = (err: any) => {
                 this._upload.onError(err);
                 reject(err);
             };
 
             xhr.addEventListener('error', () =>
-                on_error(`${xhr.status}: ${xhr.statusText || 'unknown error'}`)
+                on_error(`${xhr.status}: ${xhr.statusText || 'unknown error'}`),
             );
             xhr.addEventListener('abort', () =>
-                on_error(xhr.statusText || 'browser aborted')
+                on_error(xhr.statusText || 'browser aborted'),
             );
             xhr.open(
                 options.signature.verb,
                 options.signature.url,
-                true // async
+                true, // async
             );
 
             // Set the headers

@@ -1,7 +1,7 @@
-import { CloudProvider, State } from 'src/cloud-provider';
-import { nextHashWorker } from 'src/hash-workers';
-import { hexToBinary } from 'src/helpers';
-import { SignedReponse } from 'src/signed-request';
+import { CloudProvider, State } from '../cloud-provider';
+import { nextHashWorker } from '../hash-workers';
+import { hexToBinary } from '../helpers';
+import { SignedReponse } from '../signed-request';
 
 /* istanbul ignore file */
 
@@ -31,7 +31,7 @@ export class Amazon extends CloudProvider {
             }
 
             const result = await this._processPart(1).catch((e) =>
-                this._onError(e)
+                this._onError(e),
             );
             if (!result) return;
             // upload was paused or aborted as we were reading the file
@@ -45,7 +45,7 @@ export class Amazon extends CloudProvider {
             this._strategy = response.type;
             if (response.signature) {
                 this._upload.setAccessUrl(
-                    (response.signature.url || '').split('?')[0]
+                    (response.signature.url || '').split('?')[0],
                 );
             }
             response.type === 'direct_upload'
@@ -72,7 +72,7 @@ export class Amazon extends CloudProvider {
                     }
                     data = this._file.slice(
                         (part - 1) * this._part_size,
-                        endbyte
+                        endbyte,
                     );
                 } else {
                     data = this._file;
@@ -83,18 +83,24 @@ export class Amazon extends CloudProvider {
                 // We hash in here as not all cloud providers may use MD5
                 const hasher = nextHashWorker();
                 // Hash the part and return the result
-                return hasher.hash(data).then((md5: string) => ({ md5, part }));
-            }
+                return (hasher.hash(data) as any).then((md5: string) => ({
+                    md5,
+                    part,
+                }));
+            },
         );
     }
 
-    private async _resume(request: SignedReponse = null, firstChunk = null) {
+    private async _resume(
+        request: SignedReponse | null = null,
+        firstChunk: any = null,
+    ) {
         let i: number;
 
         if (request) {
             if (request.type === 'parts') {
                 // The upload has already started and we want to continue where we left off
-                this._pending_parts = request.part_list;
+                this._pending_parts = request.part_list!;
                 if (request.part_data) {
                     this._memoization = request.part_data;
                 }
@@ -183,14 +189,14 @@ export class Amazon extends CloudProvider {
                             partNum,
                             window.btoa(hexToBinary(result.md5)),
                             details.part_list,
-                            details.part_data
+                            details.part_data,
                         )
                         .then(
                             (response) => this._setPart(response, result),
-                            (e) => this._onError(e)
+                            (e) => this._onError(e),
                         );
                 },
-                (e) => this._onError(e)
+                (e) => this._onError(e),
             );
         } else {
             if (
@@ -204,10 +210,10 @@ export class Amazon extends CloudProvider {
                         request.data = this._generatePartManifest();
                         this._request.signedRequest(request as any).then(
                             () => this._finalise(),
-                            (e) => this._onError(e)
+                            (e) => this._onError(e),
                         );
                     },
-                    (e) => this._onError(e)
+                    (e) => this._onError(e),
                 );
             } else if (!this._finishing) {
                 // Remove part just added to _currentParts
@@ -227,23 +233,23 @@ export class Amazon extends CloudProvider {
         }
     }
 
-    private _setPart(request, partInfo) {
+    private _setPart(request: any, partInfo: any) {
         const monitor = this._makeRequest(partInfo, request);
         monitor.then(
             () => {
                 this._completePart(partInfo?.part);
                 this._nextPart();
             },
-            (e) => this._onError(e)
+            (e) => this._onError(e),
         );
     }
 
-    private _direct(request, partInfo) {
+    private _direct(request: any, partInfo: any) {
         const monitor = this._makeRequest(partInfo, request);
         this._direct_upload = true;
         monitor.then(
             () => this._finalise(),
-            (e) => this._onError(e)
+            (e) => this._onError(e),
         );
     }
 }

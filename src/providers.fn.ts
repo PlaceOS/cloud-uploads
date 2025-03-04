@@ -1,9 +1,12 @@
-import { CloudProvider } from "./cloud-provider";
-import { Type } from "./types";
+import { CloudProvider } from './cloud-provider';
+import { Type } from './types';
 
 const PROVIDERS: Record<string, Type<CloudProvider>> = {};
 
-export function registerUploadProvider(name: string, provider: Type<CloudProvider>) {
+export function registerUploadProvider(
+    name: string,
+    provider: Type<CloudProvider>,
+) {
     PROVIDERS[name] = provider;
 }
 

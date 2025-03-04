@@ -19,9 +19,9 @@ export abstract class CloudProvider {
     // * undefined == not started
     // * null      == we have made a call to create
     // * string    == upload in progress
-    protected _strategy: string;
-    protected _finalising: boolean;
-    protected _direct_upload: boolean;
+    protected _strategy: string | null | undefined = undefined;
+    protected _finalising: boolean = false;
+    protected _direct_upload: boolean = false;
     protected _progress: Record<string, { loaded: number; total: number }> = {};
     protected _current_parts: number[] = [];
     protected _pending_parts: number[] = [];
@@ -29,7 +29,10 @@ export abstract class CloudProvider {
     protected _memoization: any = {};
     protected _finishing = false;
 
-    constructor(protected _request: SignedRequest, protected _upload: Upload) {
+    constructor(
+        protected _request: SignedRequest,
+        protected _upload: Upload,
+    ) {
         this._file = this._upload.file;
         this.size = this._file.size;
     }
@@ -86,13 +89,13 @@ export abstract class CloudProvider {
     protected _makeRequest(part_info: any, details: ExtendedProviderResponse) {
         details.data = part_info.data;
         return this._request.performSignedRequest(details, (e) =>
-            this._onProgress(part_info.part, e)
+            this._onProgress(part_info.part, e),
         );
     }
     /* istanbul ignore next */
     protected _nextPartIndex() {
         if (this._pending_parts.length > 0) {
-            this._last_part = this._pending_parts.shift();
+            this._last_part = this._pending_parts.shift()!;
         } else this._last_part += 1;
         this._current_parts.push(this._last_part);
 
@@ -134,11 +137,15 @@ export abstract class CloudProvider {
     protected async _finalise() {
         this._request.updateStatus().then(
             () => this._upload.onComplete(),
-            (_) => this._onError(_)
+            (_) => this._onError(_),
         );
     }
     /* istanbul ignore next */
-    protected async _hashPart(id: string, data_fn, hash_fn) {
+    protected async _hashPart(
+        id: string,
+        data_fn: () => any,
+        hash_fn: (_: any) => any,
+    ) {
         const result = this._memoization[id];
         const data = data_fn();
         return result
@@ -147,7 +154,7 @@ export abstract class CloudProvider {
                   md5: result.md5,
                   part: result.part,
               }
-            : hash_fn(data).then((hash) => {
+            : hash_fn(data).then((hash: any) => {
                   this._memoization[id] = hash;
                   return {
                       data,
@@ -159,7 +166,7 @@ export abstract class CloudProvider {
     /* istanbul ignore next */
     protected _getPartData() {
         const list = this._currentParts().filter((_) => typeof _ === 'number');
-        const data = [];
+        const data: any[] = [];
         list.forEach((num) => {
             const details = this._memoization[`${num}`];
             if (details) data.push(details);

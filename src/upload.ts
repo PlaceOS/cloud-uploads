@@ -2,7 +2,7 @@ import { BehaviorSubject } from 'rxjs';
 import { CloudProvider } from './cloud-provider';
 import { getUploadProvider } from './providers.fn';
 import { getApiEndpoint } from './settings.fn';
-import { SignedRequest, _api_endpoint } from './signed-request';
+import { SignedRequest } from './signed-request';
 
 export type UploadStatus =
     | 'complete'
@@ -31,7 +31,7 @@ export class Upload {
     private _provider?: CloudProvider;
     private _access_url: string = '';
     /** Size of the uploaded file in bytes */
-    public readonly size: number;
+    public readonly size: number = 0;
     /** Observer for the status of the upload */
     public readonly status = this._state.asObservable();
 
@@ -47,7 +47,7 @@ export class Upload {
         public retries: number,
         public parallel: number,
         public params: Record<string, any> = {},
-        private _endpoint: string = getApiEndpoint()
+        private _endpoint: string = getApiEndpoint(),
     ) {
         this.mime_type = file?.type || this.mime_type;
     }

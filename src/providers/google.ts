@@ -1,6 +1,6 @@
-import { CloudProvider, State } from 'src/cloud-provider';
-import { nextHashWorker } from 'src/hash-workers';
-import { hexToBinary } from 'src/helpers';
+import { CloudProvider, State } from '../cloud-provider';
+import { nextHashWorker } from '../hash-workers';
+import { hexToBinary } from '../helpers';
 
 /* istanbul ignore file */
 
@@ -38,17 +38,17 @@ export class Google extends CloudProvider {
             () => chunk,
             (data) => {
                 // We hash in here as not all cloud providers may use MD5
-                const hasher = nextHashWorker();
+                const hasher = nextHashWorker() as any;
                 // Hash the part and return the result
                 return hasher.hash(data).then((md5: string) => ({
                     md5: window.btoa(hexToBinary(md5)),
                     part,
                 }));
-            }
+            },
         );
     }
 
-    private _resume(request, firstChunk) {
+    private _resume(request: any, firstChunk: any) {
         this._request.signedRequest(request).then((xhr) => {
             if (request.type === 'status') {
                 if (xhr.status === request.expected) {
@@ -56,11 +56,11 @@ export class Google extends CloudProvider {
                     const rangeStart: number =
                         parseInt(
                             xhr.getResponseHeader('Range').split('-')[1],
-                            10
+                            10,
                         ) + 1;
                     this._processPart(
                         this._file.slice(rangeStart),
-                        rangeStart
+                        rangeStart,
                     ).then((partInfo) => {
                         if (this.state !== State.Uploading) {
                             // upload was paused or aborted as we were reading the file
@@ -82,29 +82,29 @@ export class Google extends CloudProvider {
                     .updateStatus({
                         // grab the upload_id from the Location header
                         resumable_id: this._getQueryParams(
-                            xhr.getResponseHeader('Location').split('?')[1]
+                            xhr.getResponseHeader('Location').split('?')[1],
                         ).upload_id,
                         file_id: firstChunk.md5,
                         part: 0,
                     })
                     .then(
                         (data) => this._performUpload(data, firstChunk),
-                        function (reason) {
+                        (reason) => {
                             // We should start from the beginning
                             this._restart();
                             this._onError(reason);
-                        }
+                        },
                     );
             }
         }, this._onError.bind(this));
     }
 
-    private _performUpload(request, partInfo) {
+    private _performUpload(request: any, partInfo: any) {
         const monitor = this._makeRequest(partInfo, request);
         monitor.then(() => this._finalise(), this._onError.bind(this));
     }
 
-    private _direct(request, partInfo) {
+    private _direct(request: any, partInfo: any) {
         const monitor = this._makeRequest(partInfo, request);
         this._direct_upload = true;
         monitor.then(() => {
@@ -112,7 +112,7 @@ export class Google extends CloudProvider {
         }, this._onError.bind(this));
     }
 
-    private _getQueryParams(qs) {
+    private _getQueryParams(qs: string) {
         qs = qs.split('+').join(' ');
         const params: any = {};
         let tokens: any;
@@ -120,7 +120,7 @@ export class Google extends CloudProvider {
         // NOTE:: assignment in while loop is deliberate
         while ((tokens = re.exec(qs))) {
             params[decodeURIComponent(tokens[1])] = decodeURIComponent(
-                tokens[2]
+                tokens[2],
             );
         }
         return params;
