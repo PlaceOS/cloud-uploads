@@ -57,6 +57,12 @@
         ]
     },
     "homepage": "https://github.com/PlaceOS/cloud-uploads#readme",
+    "release": {
+        "branches": [
+            "develop",
+            "next"
+        ]
+    },
     "devDependencies": {
         "@vitest/coverage-v8": "^3.0.7",
         "prettier-plugin-organize-imports": "^4.1.0",
