@@ -18,24 +18,26 @@ jobs:
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
     # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-    - uses: actions/checkout@v2
-
-    - name: Setup Node.js environment
-      uses: actions/setup-node@v1.4.1
+    - uses: actions/checkout@v4
 
     - name: Cache node modules
-      uses: actions/cache@v1
-      env:
-        cache-name: ts-client-node-modules
+      id: cache
+      uses: actions/cache@v4
       with:
-        path: node_modules
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
+          path: node_modules
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+              ${{ runner.os }}-build-${{ env.cache-name }}-
+              ${{ runner.os }}-build-
+              ${{ runner.os }}-
 
-    - name: Install node modules
+    - name: Setup Node.js environment
+      uses: actions/setup-node@v4
+      with:
+          node-version: '20'
+
+    - name: NPM install
+      if: steps.cache.outputs.cache-hit != 'true'
       run: npm install
 
     - name: Test Library
@@ -54,10 +56,9 @@ jobs:
       run: npm run semantic-release
 
     - name: Publish generated content to GitHub Pages
-      uses: peaceiris/actions-gh-pages@v2.5.0
+      uses: peaceiris/actions-gh-pages@v4.0.0
       env:
         PERSONAL_TOKEN: ${{ secrets.GH_TOKEN }}
         PUBLISH_BRANCH: gh-pages
         PUBLISH_DIR: ./docs
-      with:
-        emptyCommits: false
+
