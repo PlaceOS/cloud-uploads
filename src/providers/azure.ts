@@ -6,7 +6,7 @@ import { SignedReponse } from '../signed-request';
 /* istanbul ignore file */
 
 export class Azure extends CloudProvider {
-    public static lookup: string = 'MicrosoftAzure';
+    public static lookup: string = 'AzureStorage';
     // 2MB part size
     private _partSize: number = 2097152;
 
