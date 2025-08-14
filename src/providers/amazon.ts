@@ -1,7 +1,7 @@
 import { CloudProvider, State } from '../cloud-provider';
 import { nextHashWorker } from '../hash-workers';
 import { hexToBinary } from '../helpers';
-import { SignedReponse } from '../signed-request';
+import { ChunkDetails, SignedResponse } from '../signed-request';
 
 /* istanbul ignore file */
 
@@ -92,7 +92,7 @@ export class Amazon extends CloudProvider {
     }
 
     private async _resume(
-        request: SignedReponse | null = null,
+        request: SignedResponse | null = null,
         firstChunk: any = null,
     ) {
         let i: number;
@@ -133,8 +133,7 @@ export class Amazon extends CloudProvider {
                     });
                 if (!data) return;
                 // We are provided with the first request
-                this._nextPartIndex();
-                this._setPart(data, firstChunk);
+                // this._nextPartIndex();
 
                 // Then we want to request any parallel parts
                 for (i = 1; i < this._upload.parallel; i += 1) {
@@ -172,10 +171,10 @@ export class Amazon extends CloudProvider {
     }
 
     private _nextPart() {
-        const partNum = this._nextPartIndex();
+        const part_index = this._nextPartIndex();
         let details: any;
-        if ((partNum - 1) * this._part_size < this.size) {
-            this._processPart(partNum).then(
+        if ((part_index - 1) * this._part_size < this.size) {
+            this._processPart(part_index).then(
                 (result) => {
                     if (this.state !== State.Uploading) {
                         // upload was paused or aborted as we were reading the file
@@ -186,13 +185,22 @@ export class Amazon extends CloudProvider {
 
                     this._request
                         .signNextChunk(
-                            partNum,
+                            part_index,
                             window.btoa(hexToBinary(result.md5)),
                             details.part_list,
                             details.part_data,
                         )
                         .then(
-                            (response) => this._setPart(response, result),
+                            () =>
+                                this._request
+                                    .signChunk(
+                                        part_index,
+                                        window.btoa(hexToBinary(result.md5)),
+                                    )
+                                    .then(
+                                        (r) => this._setPart(r, result),
+                                        (e) => this._onError(e),
+                                    ),
                             (e) => this._onError(e),
                         );
                 },
@@ -201,7 +209,7 @@ export class Amazon extends CloudProvider {
         } else {
             if (
                 this._currentParts().length === 1 &&
-                this._currentParts()[0] === partNum
+                this._currentParts()[0] === part_index
             ) {
                 // This is the final commit
                 this._finishing = true;
@@ -218,7 +226,7 @@ export class Amazon extends CloudProvider {
             } else if (!this._finishing) {
                 // Remove part just added to _currentParts
                 // We need this logic when performing parallel uploads
-                this._completePart(partNum);
+                this._completePart(part_index);
 
                 // We should update upload progress
                 // NOTE:: no need to subscribe as API does this for us
@@ -233,19 +241,19 @@ export class Amazon extends CloudProvider {
         }
     }
 
-    private _setPart(request: any, partInfo: any) {
-        const monitor = this._makeRequest(partInfo, request);
+    private _setPart(request: SignedResponse, part_info: ChunkDetails) {
+        const monitor = this._makeRequest(part_info, request);
         monitor.then(
             () => {
-                this._completePart(partInfo?.part);
+                this._completePart(part_info?.part);
                 this._nextPart();
             },
             (e) => this._onError(e),
         );
     }
 
-    private _direct(request: any, partInfo: any) {
-        const monitor = this._makeRequest(partInfo, request);
+    private _direct(request: SignedResponse, part_info: ChunkDetails) {
+        const monitor = this._makeRequest(part_info, request);
         this._direct_upload = true;
         monitor.then(
             () => this._finalise(),

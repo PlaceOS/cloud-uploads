@@ -1,5 +1,4 @@
-import { SignedRequest } from './signed-request';
-import { ExtendedProviderResponse } from './types';
+import { ChunkDetails, SignedRequest, SignedResponse } from './signed-request';
 import { Upload } from './upload';
 
 export enum State {
@@ -86,9 +85,9 @@ export abstract class CloudProvider {
         this._pending_parts = [];
     }
     /* istanbul ignore next */
-    protected _makeRequest(part_info: any, details: ExtendedProviderResponse) {
+    protected _makeRequest(part_info: any, details: SignedResponse) {
         details.data = part_info.data;
-        return this._request.performSignedRequest(details, (e) =>
+        return this._request.performSignedRequest(details as any, (e) =>
             this._onProgress(part_info.part, e),
         );
     }
@@ -111,12 +110,14 @@ export abstract class CloudProvider {
     }
     /* istanbul ignore next */
     protected _isComplete(index: number) {
+        console.log('Complete:', index);
         const { loaded, total } = this._progress[index] || {};
         return loaded && loaded === total;
     }
     /* istanbul ignore next */
     protected _onProgress(index: number, event: ProgressEvent) {
-        this._progress[index] = { ...event };
+        if (!event?.loaded || !event?.total) return;
+        this._progress[index] = { loaded: event.loaded, total: event.total };
         this._updateProgress();
     }
     /* istanbul ignore next */
@@ -128,14 +129,20 @@ export abstract class CloudProvider {
 
     protected _updateProgress() {
         let loaded = 0;
+
         for (const key in this._progress) {
             loaded += this._progress[key].loaded || 0;
         }
-        this._upload.onProgress(loaded);
+        this._upload.onProgress(
+            Object.keys(this._progress).reduce(
+                (acc, key) => acc + this._progress[key].loaded || 0,
+                0,
+            ),
+        );
     }
     /* istanbul ignore next */
     protected async _finalise() {
-        this._request.updateStatus().then(
+        this._request.updateStatus({}, true).then(
             () => this._upload.onComplete(),
             (_) => this._onError(_),
         );
@@ -145,7 +152,7 @@ export abstract class CloudProvider {
         id: string,
         data_fn: () => any,
         hash_fn: (_: any) => any,
-    ) {
+    ): Promise<ChunkDetails> {
         const result = this._memoization[id];
         const data = data_fn();
         return result

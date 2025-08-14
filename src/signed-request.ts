@@ -1,11 +1,17 @@
 import { toQueryString } from './helpers';
-import { ExtendedProviderResponse, ProviderResponse } from './types';
+import { ExtendedProviderResponse, HttpVerb, ProviderResponse } from './types';
 import { Upload } from './upload';
 
 export let _api_endpoint = '';
 
 let _token = '';
 let _api_key = '';
+
+export interface ChunkDetails {
+    part: number;
+    md5: string;
+    data?: any;
+}
 
 export interface SignedRequestOptions {
     file_id?: string;
@@ -16,7 +22,7 @@ export interface SignedRequestOptions {
     expires?: number;
 }
 
-export interface SignedReponse {
+export interface SignedResponse {
     type: 'direct_upload' | 'chunked_upload' | 'parts' | 'status';
     upload_id: string;
     residence: string;
@@ -25,7 +31,7 @@ export interface SignedReponse {
     data?: any;
     signature?: {
         url: string;
-        verb: string;
+        verb: HttpVerb;
         headers: Record<string, string>;
     };
 }
@@ -80,7 +86,9 @@ export class SignedRequest {
         return resp.json();
     }
 
-    public async create(options: SignedRequestOptions): Promise<SignedReponse> {
+    public async create(
+        options: SignedRequestOptions,
+    ): Promise<SignedResponse> {
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         if (options.file_id) this._params.file_id = options.file_id;
@@ -104,7 +112,7 @@ export class SignedRequest {
     public async sign(
         part_number: number | string,
         part_id: string = '',
-    ): Promise<SignedReponse> {
+    ): Promise<SignedResponse> {
         if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
@@ -135,7 +143,7 @@ export class SignedRequest {
         return await resp.json();
     }
 
-    public async signedRequest(req: SignedReponse) {
+    public async signedRequest(req: SignedResponse) {
         const resp = await fetch(req.signature!.url, {
             body: req.data,
             method: req.signature!.verb,
@@ -187,7 +195,7 @@ export class SignedRequest {
             file_id: id,
         });
         const resp = await fetch(
-            `${this._endpoint}/edit${query ? '?' + query : ''}`,
+            `${this._endpoint}/${this.encoded_id}/edit${query ? '?' + query : ''}`,
             {
                 headers,
                 signal,
@@ -196,13 +204,13 @@ export class SignedRequest {
         return await resp.json();
     }
 
-    public async updateStatus(params: Record<string, any> = {}) {
+    public async updateStatus(params: Record<string, any> = {}, done = false) {
         if (!this.upload_id) throw new Error('Upload resource not initialised');
         const { signal } = this._abort_ctrl;
         const headers = this.base_request_headers;
         const resp = await fetch(`${this._endpoint}/${this.encoded_id}`, {
             headers,
-            method: 'PUT',
+            method: done ? 'PUT' : 'PATCH',
             body: JSON.stringify(params),
             signal,
         });

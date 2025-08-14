@@ -1,14 +1,14 @@
 import { CloudProvider, State } from '../cloud-provider';
 import { nextHashWorker } from '../hash-workers';
 import { hexToBinary } from '../helpers';
-import { SignedReponse } from '../signed-request';
+import { SignedResponse } from '../signed-request';
 
 /* istanbul ignore file */
 
 export class Azure extends CloudProvider {
     public static lookup: string = 'AzureStorage';
     // 2MB part size
-    private _partSize: number = 2097152;
+    private _part_size: number = 2097152;
 
     protected _start() {
         if (this._strategy === undefined) {
@@ -18,10 +18,10 @@ export class Azure extends CloudProvider {
             // Update part size
             // Not because we have to, no limits as such with openstack
             // This ensures requests don't break any limits on our system
-            if (this._partSize * 50000 < this.size) {
-                this._partSize = Math.floor(this.size / 50000);
+            if (this._part_size * 50000 < this.size) {
+                this._part_size = Math.floor(this.size / 50000);
                 // 4MB limit on part sizes
-                if (this._partSize > 4 * 1024 * 1024) {
+                if (this._part_size > 4 * 1024 * 1024) {
                     this._upload.cancel();
                     this._onError('file exceeds maximum size of 195GB');
                     return;
@@ -58,13 +58,13 @@ export class Azure extends CloudProvider {
                 let data: any;
                 let endbyte: number;
                 // Calculate the part of the file that requires hashing
-                if (this.size > this._partSize) {
-                    endbyte = part * this._partSize;
+                if (this.size > this._part_size) {
+                    endbyte = part * this._part_size;
                     if (endbyte > this.size) {
                         endbyte = this.size;
                     }
                     data = this._file.slice(
-                        (part - 1) * this._partSize,
+                        (part - 1) * this._part_size,
                         endbyte,
                     );
                 } else {
@@ -86,43 +86,54 @@ export class Azure extends CloudProvider {
         );
     }
 
-    private _resume(
-        request: SignedReponse | null = null,
+    private async _resume(
+        request: SignedResponse | null = null,
         firstChunk: any = null,
     ) {
         let i: number;
+
         if (request) {
             if (request.type === 'parts') {
                 // The upload has already started and we want to continue where we left off
-                this._pending_parts = request.part_list as number[];
+                this._pending_parts = request.part_list!;
+                if (request.part_data) {
+                    this._memoization = request.part_data;
+                }
 
                 for (i = 0; i < this._upload.parallel; i += 1) {
                     this._nextPart();
                 }
             } else {
-                this._request
+                const response = await this._request
+                    .signedRequest(request)
+                    .catch((reason) => {
+                        this._restart();
+                        this._onError(reason);
+                    });
+                if (!response) return;
+                // The upload was created on amazon - we need to track the upload id
+                const uploadId =
+                    response.responseXML.getElementsByTagName('UploadId')[0]
+                        .textContent;
+                const data = await this._request
                     .updateStatus({
-                        resumable_id: 'n/a',
-                        file_id: firstChunk.md5,
+                        resumable_id: uploadId,
+                        file_id: window.btoa(hexToBinary(firstChunk.md5)),
                         part: 1,
                     })
-                    .then(
-                        (data) => {
-                            // We are provided with the first request
-                            this._nextPartIndex();
-                            this._setPart(data, firstChunk);
+                    .catch((reason) => {
+                        // We should start from the beginning
+                        this._restart();
+                        this._onError(reason);
+                    });
+                if (!data) return;
+                // We are provided with the first request
+                // this._nextPartIndex();
 
-                            // Then we want to request any parallel parts
-                            for (i = 1; i < this._upload.parallel; i += 1) {
-                                this._nextPart();
-                            }
-                        },
-                        (reason) => {
-                            // We should start from the beginning
-                            this._restart();
-                            this._onError(reason);
-                        },
-                    );
+                // Then we want to request any parallel parts
+                for (i = 1; i < this._upload.parallel; i += 1) {
+                    this._nextPart();
+                }
             }
         } else {
             // Client side resume after the upload was paused
@@ -135,7 +146,7 @@ export class Azure extends CloudProvider {
     private _generatePartManifest() {
         let list: string = '<?xml version="1.0" encoding="utf-8"?><BlockList>';
         for (let i = 0; i < 50000; i += 1) {
-            if (i * this._partSize < this.size) {
+            if (i * this._part_size < this.size) {
                 list += `<Latest>${window.btoa(this._pad(i + 1))}</Latest>`;
             } else {
                 break;
@@ -152,41 +163,59 @@ export class Azure extends CloudProvider {
     }
 
     private _nextPart() {
-        let partNum = this._nextPartIndex();
+        const part_index = this._nextPartIndex();
+        let details: any;
+        if ((part_index - 1) * this._part_size < this.size) {
+            this._processPart(part_index).then(
+                (result) => {
+                    if (this.state !== State.Uploading) {
+                        // upload was paused or aborted as we were reading the file
+                        return;
+                    }
 
-        if ((partNum - 1) * this._partSize < this.size) {
-            this._processPart(partNum).then((result) => {
-                if (this.state !== State.Uploading) {
-                    // upload was paused or aborted as we were reading the file
-                    return;
-                }
+                    details = this._getPartData();
 
-                this._request
-                    .signNextChunk(partNum, result.md5, this._currentParts())
-                    .then((response) => {
-                        this._setPart(response, result);
-                    }, this._onError.bind(this));
-            }, this._onError.bind(this));
+                    this._request
+                        .signNextChunk(
+                            part_index,
+                            result.md5,
+                            details.part_list,
+                            details.part_data,
+                        )
+                        .then(
+                            () =>
+                                this._request
+                                    .signChunk(part_index, result.md5)
+                                    .then(
+                                        (r) => this._setPart(r, result),
+                                        (e) => this._onError(e),
+                                    ),
+                            (e) => this._onError(e),
+                        );
+                },
+                (e) => this._onError(e),
+            );
         } else {
             if (
                 this._currentParts().length === 1 &&
-                this._currentParts()[0] === partNum
+                this._currentParts()[0] === part_index
             ) {
                 // This is the final commit
                 this._finishing = true;
-                this._request.sign('finish').then((request) => {
-                    request.data = this._generatePartManifest();
-                    this._request
-                        .signedRequest(request as any)
-                        .then(
-                            this._finalise.bind(this),
-                            this._onError.bind(this),
+                this._request.sign('finish').then(
+                    (request) => {
+                        request.data = this._generatePartManifest();
+                        this._request.signedRequest(request as any).then(
+                            () => this._finalise(),
+                            (e) => this._onError(e),
                         );
-                }, this._onError.bind(this));
+                    },
+                    (e) => this._onError(e),
+                );
             } else if (!this._finishing) {
                 // Remove part just added to _currentParts
                 // We need this logic when performing parallel uploads
-                this._completePart(partNum);
+                this._completePart(part_index);
 
                 // We should update upload progress
                 // NOTE:: no need to subscribe as API does this for us
@@ -194,10 +223,9 @@ export class Azure extends CloudProvider {
                 //
                 // Also this is only executed towards the end of an upload
                 // as no new parts are being requested to update the status
-                this._request.updateStatus({
-                    part_update: true,
-                    part_list: this._currentParts(),
-                });
+                details = this._getPartData();
+                details.part_update = true;
+                this._request.updateStatus(details);
             }
         }
     }
