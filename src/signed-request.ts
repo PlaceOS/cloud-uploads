@@ -144,6 +144,9 @@ export class SignedRequest {
     }
 
     public async signedRequest(req: SignedResponse) {
+        if (!req.signature!.url) {
+            return { body: '', responseXML: null };
+        }
         const resp = await fetch(req.signature!.url, {
             body: req.data,
             method: req.signature!.verb,

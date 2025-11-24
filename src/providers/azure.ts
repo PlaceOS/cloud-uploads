@@ -113,11 +113,11 @@ export class Azure extends CloudProvider {
                 if (!response) return;
                 // The upload was created on amazon - we need to track the upload id
                 const uploadId =
-                    response.responseXML.getElementsByTagName('UploadId')[0]
-                        .textContent;
+                    response.responseXML?.getElementsByTagName('UploadId')?.[0]
+                        ?.textContent;
                 const data = await this._request
                     .updateStatus({
-                        resumable_id: uploadId,
+                        resumable_id: uploadId || btoa('000001'),
                         file_id: window.btoa(hexToBinary(firstChunk.md5)),
                         part: 1,
                     })
