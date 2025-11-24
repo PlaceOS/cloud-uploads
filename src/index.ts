@@ -13,6 +13,7 @@ export {
     type UploadServiceOptions,
 } from './api';
 export { hexToBinary, humanReadableByteCount, toQueryString } from './helpers';
+export { SignedRequest } from './signed-request';
 export { Upload, type UploadState, type UploadStatus } from './upload';
 
 /* istanbul ignore file */
