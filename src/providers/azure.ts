@@ -225,7 +225,7 @@ export class Azure extends CloudProvider {
                 // as no new parts are being requested to update the status
                 details = this._getPartData();
                 details.part_update = true;
-                this._request.updateStatus(details);
+                this._request.updateStatus(details, true);
             }
         }
     }
