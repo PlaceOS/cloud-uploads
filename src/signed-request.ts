@@ -182,7 +182,7 @@ export class SignedRequest {
             `${this._endpoint}/${this.encoded_id}${query ? '?' + query : ''}`,
             {
                 body: JSON.stringify(body),
-                method: 'PUT',
+                method: 'PATCH',
                 headers,
                 signal,
             },
