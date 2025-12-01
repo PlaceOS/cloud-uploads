@@ -66,9 +66,7 @@ export const Azure: Provider = {
     part_size: 2 * MiB,
     // Azure uses block IDs, not a resumable upload ID
     // Use a placeholder that identifies this upload session
-    resume_id: (_text: string) => {
-        return window.btoa(padPartNumber(1));
-    },
+    resume_id: (text: string) => text,
     finalise_body: (upload: Upload, _partData: UploadPart[]) => {
         // Generate XML BlockList for Azure
         const totalParts = Math.ceil(upload.file.size / Azure.part_size);

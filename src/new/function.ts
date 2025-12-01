@@ -1,4 +1,4 @@
-import { ParallelHasher } from 'ts-md5';
+import { Md5, ParallelHasher } from 'ts-md5';
 
 import { toQueryString } from '../helpers';
 import { Provider, providerByName } from './providers';
@@ -86,6 +86,8 @@ export async function createNewUpload(
         });
         const provider_data = await init_result.text();
         resume_id = provider.resume_id(provider_data);
+    } else {
+        resume_id = `${Md5.hashStr(`${Date.now()}|${file.name}`)}`;
     }
     console.debug(
         `[UPLOADS] Initialised upload for ${file.name} (${resume_id})`,
