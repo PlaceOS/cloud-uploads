@@ -1,0 +1,739 @@
+import {
+    acquireHashWorker,
+    commitUpload,
+    finishUpload,
+    getHashWorkerCount,
+    hexToBinary,
+    prepareNextPart,
+    preparePart,
+    releaseHashWorker,
+} from './function';
+import { UploadPart, UploadPartDetails, UploadSignature } from './types';
+import { Upload, UploadState } from './upload';
+
+interface ChunkTask {
+    upload_id: string;
+    part: number;
+    start: number;
+    end: number;
+    retries: number;
+}
+
+interface ManagerConfig {
+    simultaneous: number;
+    parallel: number;
+    retries: number;
+    auto_start: boolean;
+    auto_remove: boolean;
+    remove_after_ms: number;
+}
+
+let _upload_list: Upload[] = [];
+let _chunk_queue: ChunkTask[] = [];
+let _active_chunks = 0;
+let _active_uploads = 0;
+let _paused_uploads: Set<string> = new Set();
+let _pending_uploads: Upload[] = [];
+let _removal_timers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+
+// Hash cache: Map<"upload_id:part", {hex, base64}> for chunk hashes
+interface HashCacheEntry {
+    hex: string;
+    base64: string;
+}
+let _hash_cache: Map<string, HashCacheEntry> = new Map();
+
+let _config: ManagerConfig = {
+    simultaneous: 2,
+    parallel: 3,
+    retries: 3,
+    auto_start: true,
+    auto_remove: false,
+    remove_after_ms: -1,
+};
+
+/** Configure the manager settings */
+export function configureUploadManager(options: Partial<ManagerConfig>) {
+    console.debug('[UPLOADS] Configured upload manager');
+    _config = { ..._config, ...options };
+}
+
+/** Calculate MD5 hash of a blob/file chunk using ts-md5 ParallelHasher */
+async function md5Hash(blob: Blob): Promise<HashCacheEntry> {
+    const { worker, index } = await acquireHashWorker();
+    try {
+        const hash = await worker.hash(blob);
+        const hashStr = hash as string;
+
+        // Remove any non-hex characters (spaces, etc.) before converting
+        const hex = hashStr.replace(/[^0-9a-fA-F]/g, '');
+        const base64 = window.btoa(hexToBinary(hex));
+
+        return { hex, base64 };
+    } finally {
+        releaseHashWorker(index);
+    }
+}
+
+/** Clear hash cache for an upload */
+function clearHashCache(uploadId: string): void {
+    // Remove all entries for this upload
+    for (const key of _hash_cache.keys()) {
+        if (key.startsWith(`${uploadId}:`)) {
+            _hash_cache.delete(key);
+        }
+    }
+}
+
+/** Get the total number of parts for a file */
+function getTotalParts(file: File, partSize: number): number {
+    return Math.ceil(file.size / partSize);
+}
+
+/** Slice a file into a chunk */
+function getChunk(file: File, part: number, partSize: number): Blob {
+    const start = (part - 1) * partSize;
+    const end = Math.min(start + partSize, file.size);
+    return file.slice(start, end);
+}
+
+/** Update upload state */
+function updateState(upload: Upload, updates: Partial<UploadState>) {
+    const current = upload.state.getValue();
+    upload.state.next({ ...current, ...updates });
+}
+
+/** Upload a single chunk to the blob storage */
+async function uploadChunk(
+    signature: UploadSignature,
+    chunk: Blob,
+): Promise<string> {
+    let response: Response;
+    try {
+        response = await fetch(signature.url, {
+            method: signature.verb,
+            headers: signature.headers,
+            body: chunk,
+        });
+    } catch (error) {
+        // Network error or fetch was aborted
+        const message =
+            error instanceof Error ? error.message : 'Unknown network error';
+        throw new Error(`Chunk upload failed: ${message}`);
+    }
+
+    if (!response.ok) {
+        // Server returned an error status
+        let errorBody = '';
+        try {
+            errorBody = await response.text();
+        } catch {
+            // Ignore errors reading error body
+        }
+        throw new Error(
+            `Chunk upload failed with status ${response.status}: ${errorBody || response.statusText}`,
+        );
+    }
+
+    // Return the ETag or response text for part tracking
+    return response.headers.get('ETag') || (await response.text());
+}
+
+/** Process the next chunk in the queue */
+async function processNextChunk(): Promise<void> {
+    if (_chunk_queue.length === 0 || _active_chunks >= _config.parallel) {
+        return;
+    }
+
+    const task = _chunk_queue.shift();
+    if (!task) return;
+
+    const upload = getUpload(task.upload_id);
+    if (!upload || _paused_uploads.has(task.upload_id)) {
+        // Upload was removed or paused, skip this chunk
+        return;
+    }
+
+    _active_chunks++;
+    const state = upload.state.getValue();
+
+    // Mark chunk as working
+    updateState(upload, {
+        status: 'UPLOADING',
+        working: [...state.working, task.part],
+    });
+
+    try {
+        // Get pre-computed hash from cache (use base64 for API calls)
+        const partHashEntry = _hash_cache.get(`${upload.id}:${task.part}`);
+        const partHash = partHashEntry?.base64 ?? '';
+        const totalParts = getTotalParts(
+            upload.file,
+            upload.provider.part_size,
+        );
+        const completedParts = upload.state.getValue().completed;
+
+        // Get signature for this part
+        let signature: UploadSignature;
+        if (completedParts.length === 0) {
+            // First part - use preparePart
+            signature = await preparePart(
+                upload.id,
+                upload.resume_id,
+                task.part,
+                partHash,
+            );
+        } else {
+            // Build finished parts details for all completed parts
+            const finishedParts: UploadPartDetails = {
+                part_list: completedParts,
+                part_data: completedParts.map((part) => ({
+                    part,
+                    md5: _hash_cache.get(`${upload.id}:${part}`)?.base64 ?? '',
+                })),
+            };
+
+            // Subsequent parts - notify previous completion and get next signature
+            signature = await prepareNextPart(
+                upload.id,
+                task.part,
+                partHash,
+                finishedParts,
+            );
+        }
+
+        // Create chunk only when needed for upload
+        const chunk = getChunk(
+            upload.file,
+            task.part,
+            upload.provider.part_size,
+        );
+
+        // Upload the chunk to blob storage
+        await uploadChunk(signature, chunk);
+
+        // Update state - mark as completed
+        const currentState = upload.state.getValue();
+        const newCompleted = [...currentState.completed, task.part].sort(
+            (a, b) => a - b,
+        );
+        const newWorking = currentState.working.filter((p) => p !== task.part);
+
+        updateState(upload, {
+            completed: newCompleted,
+            working: newWorking,
+            progress: Math.round((newCompleted.length / totalParts) * 100),
+        });
+
+        // Check if upload is complete
+        if (newCompleted.length === totalParts) {
+            try {
+                await finalizeUpload(upload);
+            } catch (finalizeError) {
+                // Finalization failed - mark upload as failed (no retry for finalization)
+                clearHashCache(upload.id);
+                updateState(upload, { status: 'FAILED' });
+                console.error(
+                    `[UPLOADS] Finalization failed for ${upload.file.name}:`,
+                    finalizeError,
+                );
+                _active_uploads--;
+                processNextPendingUpload();
+                return;
+            }
+        }
+    } catch (error) {
+        const currentState = upload.state.getValue();
+        const newWorking = currentState.working.filter((p) => p !== task.part);
+
+        // Retry if we haven't exceeded the retry limit
+        if (task.retries < _config.retries) {
+            console.warn(
+                `Chunk upload failed for part ${task.part}, retrying (${task.retries + 1}/${_config.retries})...`,
+            );
+            // Re-queue the task with incremented retry count
+            _chunk_queue.push({ ...task, retries: task.retries + 1 });
+            updateState(upload, { working: newWorking });
+        } else {
+            // Mark upload as failed after exhausting retries
+            clearHashCache(upload.id);
+            updateState(upload, {
+                status: 'FAILED',
+                working: newWorking,
+            });
+            console.error(
+                `Chunk upload failed for part ${task.part} after ${_config.retries} retries:`,
+                error,
+            );
+
+            // Remove remaining chunks for this upload from the queue
+            _chunk_queue = _chunk_queue.filter(
+                (t) => t.upload_id !== upload.id,
+            );
+
+            // Decrement active uploads and start next pending upload
+            _active_uploads--;
+            processNextPendingUpload();
+        }
+    } finally {
+        _active_chunks -= 1;
+        // Process next chunk
+        processNextChunk();
+    }
+}
+
+/** Finalize a completed upload */
+async function finalizeUpload(upload: Upload): Promise<void> {
+    const state = upload.state.getValue();
+    const partData: UploadPart[] = [];
+
+    // Build part data with pre-computed hashes from cache
+    for (const part of state.completed) {
+        const hashEntry = _hash_cache.get(`${upload.id}:${part}`);
+        partData.push({
+            part,
+            md5: hashEntry?.base64 ?? '',
+            md5_hex: hashEntry?.hex ?? '',
+        });
+    }
+
+    // Get finalization signature
+    const signature = await finishUpload(upload.id, {
+        part_list: state.completed,
+        part_data: partData,
+    });
+
+    // If signature has a URL, send the finalization request to blob storage
+    if (signature.url) {
+        let response: Response;
+        try {
+            response = await fetch(signature.url, {
+                method: signature.verb,
+                headers: signature.headers,
+                body:
+                    signature.body ||
+                    upload.provider.finalise_body(upload, partData),
+            });
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : 'Unknown network error';
+            throw new Error(`Finalization request failed: ${message}`);
+        }
+
+        if (!response.ok) {
+            let errorBody = '';
+            try {
+                errorBody = await response.text();
+            } catch {
+                // Ignore errors reading error body
+            }
+            throw new Error(
+                `Finalization request failed with status ${response.status}: ${errorBody || response.statusText}`,
+            );
+        }
+    }
+
+    // Commit the upload in PlaceOS
+    await commitUpload(upload.id);
+
+    // Clear hash cache for this upload - no longer needed
+    clearHashCache(upload.id);
+
+    updateState(upload, {
+        status: 'COMPLETED',
+        progress: 100,
+    });
+
+    // Decrement active uploads and start next pending upload
+    _active_uploads--;
+    processNextPendingUpload();
+
+    // Handle auto-removal
+    if (_config.auto_remove) {
+        if (_config.remove_after_ms >= 0) {
+            // Schedule removal after specified delay
+            const timer = setTimeout(() => {
+                removeUpload(upload.id);
+                _removal_timers.delete(upload.id);
+            }, _config.remove_after_ms);
+            _removal_timers.set(upload.id, timer);
+        } else {
+            // Remove immediately
+            removeUpload(upload.id);
+        }
+    }
+}
+
+/** Process the next pending upload if under the simultaneous limit */
+function processNextPendingUpload(): void {
+    if (
+        _pending_uploads.length === 0 ||
+        _active_uploads >= _config.simultaneous
+    ) {
+        return;
+    }
+
+    const pending = _pending_uploads.shift();
+    if (!pending) return;
+
+    _active_uploads++;
+
+    // Handle direct vs chunked uploads
+    if (pending.is_direct) {
+        void processDirectUpload(pending);
+    } else {
+        void queueChunks(pending).catch((err) => {
+            console.error(`[UPLOADS] Failed to queue chunks:`, err);
+            clearHashCache(pending.id);
+            updateState(pending, { status: 'FAILED' });
+            _active_uploads--;
+        });
+    }
+}
+
+/** Process a direct (non-chunked) upload */
+async function processDirectUpload(
+    upload: Upload,
+    retries: number = 0,
+): Promise<void> {
+    if (!upload.direct_signature) {
+        console.error(`[UPLOADS] Direct upload ${upload.id} missing signature`);
+        updateState(upload, { status: 'FAILED' });
+        _active_uploads--;
+        processNextPendingUpload();
+        return;
+    }
+
+    console.debug(
+        `[UPLOADS] Processing direct upload for ${upload.file.name}...`,
+    );
+    updateState(upload, { status: 'UPLOADING', progress: 0 });
+
+    try {
+        // Upload the file directly
+        const response = await fetch(upload.direct_signature.url, {
+            method: upload.direct_signature.verb,
+            headers: upload.direct_signature.headers,
+            body: upload.file,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Upload failed with status ${response.status}`);
+        }
+
+        console.debug(
+            `[UPLOADS] Direct upload complete for ${upload.file.name}, committing...`,
+        );
+
+        // Commit the upload in PlaceOS
+        await commitUpload(upload.id);
+
+        updateState(upload, {
+            status: 'COMPLETED',
+            progress: 100,
+        });
+
+        // Decrement active uploads and start next pending upload
+        _active_uploads--;
+        processNextPendingUpload();
+
+        // Handle auto-removal
+        if (_config.auto_remove) {
+            if (_config.remove_after_ms >= 0) {
+                const timer = setTimeout(() => {
+                    removeUpload(upload.id);
+                    _removal_timers.delete(upload.id);
+                }, _config.remove_after_ms);
+                _removal_timers.set(upload.id, timer);
+            } else {
+                removeUpload(upload.id);
+            }
+        }
+    } catch (error) {
+        // Retry if we haven't exceeded the retry limit
+        if (retries < _config.retries) {
+            console.warn(
+                `[UPLOADS] Direct upload failed for ${upload.file.name}, retrying (${retries + 1}/${_config.retries})...`,
+            );
+            processDirectUpload(upload, retries + 1);
+        } else {
+            console.error(
+                `[UPLOADS] Direct upload failed for ${upload.file.name} after ${_config.retries} retries:`,
+                error,
+            );
+            clearHashCache(upload.id);
+            updateState(upload, { status: 'FAILED' });
+            _active_uploads--;
+            processNextPendingUpload();
+        }
+    }
+}
+
+/** Queue chunks for an upload, hashing in parallel and queuing as each completes */
+async function queueChunks(
+    upload: Upload,
+    startPart: number = 1,
+): Promise<void> {
+    // Validate provider has a valid part size
+    if (!upload.provider.part_size || upload.provider.part_size <= 0) {
+        throw new Error(
+            `Invalid provider part_size: ${upload.provider.part_size}. Provider: ${upload.provider.name}`,
+        );
+    }
+
+    if (!upload.resume_id) {
+        throw new Error(
+            `Invalid resume_id: ${upload.resume_id}. Upload: ${upload.id}`,
+        );
+    }
+
+    const totalParts = getTotalParts(upload.file, upload.provider.part_size);
+    const state = upload.state.getValue();
+    const workerCount = getHashWorkerCount();
+
+    console.debug(
+        `[UPLOADS] Queuing ${totalParts} chunks for ${upload.file.name} (part size: ${upload.provider.part_size}, workers: ${workerCount})`,
+    );
+
+    // Track pending hash operations for parallel execution
+    const pending: Set<Promise<void>> = new Set();
+
+    /** Hash a single part and queue it for upload */
+    const hashAndQueue = async (part: number): Promise<void> => {
+        const cacheKey = `${upload.id}:${part}`;
+        if (!_hash_cache.has(cacheKey)) {
+            console.debug(
+                `[UPLOADS] Computing hash for part ${part}/${totalParts}...`,
+            );
+            const chunk = getChunk(
+                upload.file,
+                part,
+                upload.provider.part_size,
+            );
+            const hash = await md5Hash(chunk);
+            _hash_cache.set(cacheKey, hash);
+            console.debug(`[UPLOADS] Part ${part}/${totalParts} hash cached`);
+        }
+
+        // Queue this chunk immediately after hash is computed
+        const start = (part - 1) * upload.provider.part_size;
+        const end = Math.min(
+            start + upload.provider.part_size,
+            upload.file.size,
+        );
+
+        _chunk_queue.push({
+            upload_id: upload.id,
+            part,
+            start,
+            end,
+            retries: 0,
+        });
+
+        // Start processing if we have capacity
+        processNextChunk();
+    };
+
+    // Hash and queue chunks in parallel up to worker count
+    for (let part = startPart; part <= totalParts; part++) {
+        // Skip already completed parts
+        if (state.completed.includes(part)) continue;
+
+        // Check if paused or removed
+        if (_paused_uploads.has(upload.id) || !getUpload(upload.id)) {
+            console.debug(
+                `[UPLOADS] Chunk queuing cancelled for ${upload.file.name}`,
+            );
+            await Promise.all(pending);
+            return;
+        }
+
+        // Start hashing this part - promise removes itself when done
+        const promise = hashAndQueue(part).finally(() => {
+            pending.delete(promise);
+        });
+        pending.add(promise);
+
+        // If at capacity, wait for one to complete before starting next
+        if (pending.size >= workerCount) {
+            await Promise.race(pending);
+        }
+    }
+
+    // Wait for remaining hashes to complete
+    await Promise.all(pending);
+
+    console.debug(`[UPLOADS] All chunks queued for ${upload.file.name}`);
+}
+
+/** Add an upload to the manager and optionally start uploading */
+export function addUpload(upload: Upload, completedParts: number[] = []) {
+    console.debug(
+        `[UPLOADS] Adding upload to manager (${upload.file.name})...`,
+    );
+    _upload_list.push(upload);
+    _paused_uploads.delete(upload.id);
+
+    // Handle direct uploads differently
+    if (upload.is_direct) {
+        console.debug(`[UPLOADS] Upload is direct (${upload.file.name})`);
+        updateState(upload, {
+            status: _config.auto_start ? 'UPLOADING' : 'PAUSED',
+            completed: [],
+            pending_complete: [],
+            working: [],
+            progress: 0,
+        });
+
+        if (!_config.auto_start) {
+            return;
+        }
+
+        // Check if we're at the simultaneous upload limit
+        if (_active_uploads >= _config.simultaneous) {
+            _pending_uploads.push(upload);
+            updateState(upload, { status: 'PAUSED' });
+            return;
+        }
+
+        _active_uploads++;
+        void processDirectUpload(upload);
+        return;
+    }
+    console.debug(`[UPLOADS] Upload is chunked (${upload.file.name})`);
+
+    // Handle chunked uploads
+    const totalParts = getTotalParts(upload.file, upload.provider.part_size);
+    const sortedCompleted = [...completedParts].sort((a, b) => a - b);
+    const progress = Math.round((sortedCompleted.length / totalParts) * 100);
+
+    // Initialize state with any previously completed parts
+    updateState(upload, {
+        status: _config.auto_start ? 'UPLOADING' : 'PAUSED',
+        completed: sortedCompleted,
+        pending_complete: [],
+        working: [],
+        progress,
+    });
+
+    // If auto_start is disabled, don't start uploading
+    if (!_config.auto_start) {
+        return;
+    }
+    console.debug(`[UPLOADS] Staring upload (${upload.file.name})...`);
+
+    // Check if we're at the simultaneous upload limit
+    if (_active_uploads >= _config.simultaneous) {
+        // Queue this upload for later
+        _pending_uploads.push(upload);
+        updateState(upload, { status: 'PAUSED' });
+        return;
+    }
+
+    _active_uploads++;
+    console.debug(
+        `[UPLOADS] Queuing chunks to upload (${upload.file.name})...`,
+    );
+
+    // Queue remaining chunks starting from the first incomplete part
+    const startPart =
+        sortedCompleted.length > 0 ? Math.max(...sortedCompleted) + 1 : 1;
+    void queueChunks(upload, startPart).catch((err) => {
+        console.error(`[UPLOADS] Failed to queue chunks:`, err);
+        clearHashCache(upload.id);
+        updateState(upload, { status: 'FAILED' });
+        _active_uploads--;
+    });
+}
+
+/** Get an upload by ID */
+export function getUpload(id: string): Upload | undefined {
+    return _upload_list.find((upload) => upload.id === id);
+}
+
+/** Clear all uploads */
+export function clearUploads() {
+    // Clear any pending removal timers
+    _removal_timers.forEach((timer) => clearTimeout(timer));
+    _removal_timers.clear();
+
+    // Clear hash cache
+    _hash_cache.clear();
+
+    _upload_list = [];
+    _chunk_queue = [];
+    _pending_uploads = [];
+    _paused_uploads.clear();
+    _active_chunks = 0;
+    _active_uploads = 0;
+}
+
+/** Pause an upload */
+export function pauseUpload(id: string) {
+    const upload = getUpload(id);
+    if (!upload) return;
+
+    _paused_uploads.add(id);
+
+    // Remove pending chunks for this upload from queue
+    _chunk_queue = _chunk_queue.filter((task) => task.upload_id !== id);
+
+    updateState(upload, { status: 'PAUSED' });
+}
+
+/** Resume a paused upload */
+export function resumeUpload(id: string) {
+    const upload = getUpload(id);
+    if (!upload) return;
+
+    _paused_uploads.delete(id);
+
+    // Check if we're at the simultaneous upload limit
+    if (_active_uploads >= _config.simultaneous) {
+        _pending_uploads.push(upload);
+        return;
+    }
+
+    _active_uploads++;
+
+    // Handle direct vs chunked uploads
+    if (upload.is_direct) {
+        void processDirectUpload(upload);
+    } else {
+        const state = upload.state.getValue();
+        const nextPart =
+            state.completed.length > 0 ? Math.max(...state.completed) + 1 : 1;
+        void queueChunks(upload, nextPart).catch((err) => {
+            console.error(`[UPLOADS] Failed to queue chunks:`, err);
+            clearHashCache(upload.id);
+            updateState(upload, { status: 'FAILED' });
+            _active_uploads--;
+        });
+    }
+}
+
+/** Get all uploads */
+export function listUploads(): Upload[] {
+    return [..._upload_list];
+}
+
+/** Remove an upload by ID */
+export function removeUpload(id: string) {
+    // Clear any pending removal timer
+    const timer = _removal_timers.get(id);
+    if (timer) {
+        clearTimeout(timer);
+        _removal_timers.delete(id);
+    }
+
+    // Clear hash cache for this upload
+    clearHashCache(id);
+
+    _paused_uploads.add(id); // Prevent further chunk processing
+    _chunk_queue = _chunk_queue.filter((task) => task.upload_id !== id);
+    _pending_uploads = _pending_uploads.filter((upload) => upload.id !== id);
+    _upload_list = _upload_list.filter((upload) => upload.id !== id);
+    _paused_uploads.delete(id);
+}
