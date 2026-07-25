@@ -43,6 +43,8 @@ describe('chunked upload manager', () => {
     let calls: FetchCall[];
     /** Responses for the PlaceOS commit call, consumed in order */
     let commit_queue: Array<{ status: number }>;
+    /** Responses for blob storage part uploads, consumed in order */
+    let blob_queue: Array<{ status: number }>;
     /** Response for the create call */
     let create_body: Record<string, unknown>;
 
@@ -72,12 +74,14 @@ describe('chunked upload manager', () => {
         calls.filter(
             (call) => call.method === 'PATCH' && call.url.includes('part='),
         );
+    const blobCalls = () => calls.filter((call) => !call.url.startsWith(API));
 
     beforeEach(() => {
         // btoa is global in node but the source reads it off `window`
         (globalThis as any).window ??= globalThis;
         calls = [];
         commit_queue = [];
+        blob_queue = [];
         create_body = { ...chunkedBody };
 
         (globalThis.fetch as any) = vi.fn(
@@ -91,7 +95,8 @@ describe('chunked upload manager', () => {
                 });
                 if (!target.startsWith(API)) {
                     // Blob storage part upload / finalisation
-                    return response(200, '');
+                    const next = blob_queue.shift() || { status: 200 };
+                    return response(next.status, '');
                 }
                 if (method === 'POST') return response(200, create_body);
                 if (method === 'PATCH' && target.includes('part=')) {
@@ -208,6 +213,43 @@ describe('chunked upload manager', () => {
 
             expect(state.error).toContain('400');
             expect(commitCalls()).toHaveLength(1);
+        });
+    });
+
+    describe('blob storage failures', () => {
+        test('should fail fast on a rejected signature', async () => {
+            initUploads({ token: 'tok', retries: 3, worker_url: 'w.js' });
+            blob_queue = [{ status: 403 }];
+
+            const upload = await uploadFile(new File(['data'], 'a.mp4'));
+            const state = await waitFor(upload, 'FAILED');
+
+            expect(state.error).toContain('403');
+            // Replaying a rejected signature can never succeed
+            expect(blobCalls()).toHaveLength(1);
+        });
+
+        test('should fail fast on a rejected direct upload', async () => {
+            initUploads({ token: 'tok', retries: 3, worker_url: 'w.js' });
+            create_body = { ...directBody };
+            blob_queue = [{ status: 403 }];
+
+            const upload = await uploadFile(new File(['data'], 'a.png'));
+            const state = await waitFor(upload, 'FAILED');
+
+            expect(state.error).toContain('403');
+            expect(blobCalls()).toHaveLength(1);
+        });
+
+        test('should still retry a transient blob storage error', async () => {
+            initUploads({ token: 'tok', retries: 3, worker_url: 'w.js' });
+            blob_queue = [{ status: 503 }];
+
+            const upload = await uploadFile(new File(['data'], 'a.mp4'));
+            await waitFor(upload, 'COMPLETED');
+
+            // The failed part, its retry, and the finalisation request
+            expect(blobCalls().length).toBeGreaterThan(1);
         });
     });
 

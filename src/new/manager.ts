@@ -7,6 +7,7 @@ import {
     prepareNextPart,
     preparePart,
     releaseHashWorker,
+    UploadError,
 } from './function';
 import { UploadPart, UploadPartDetails, UploadSignature } from './types';
 import { Upload, UploadState } from './upload';
@@ -115,6 +116,14 @@ function errorMessage(error: unknown): string {
     return 'Unknown upload error';
 }
 
+/**
+ * Anything that did not come back with a status is treated as transient, since
+ * that is the shape of a dropped connection.
+ */
+function isRetryable(error: unknown): boolean {
+    return error instanceof UploadError ? error.retryable : true;
+}
+
 function delay(duration: number) {
     return new Promise((resolve) => setTimeout(resolve, duration));
 }
@@ -197,7 +206,7 @@ async function uploadChunk(
         // Network error or fetch was aborted
         const message =
             error instanceof Error ? error.message : 'Unknown network error';
-        throw new Error(`Chunk upload failed: ${message}`);
+        throw new UploadError(`Chunk upload failed: ${message}`);
     }
 
     if (!response.ok) {
@@ -208,8 +217,10 @@ async function uploadChunk(
         } catch {
             // Ignore errors reading error body
         }
-        throw new Error(
+        throw new UploadError(
             `Chunk upload failed with status ${response.status}: ${errorBody || response.statusText}`,
+            response.status,
+            errorBody,
         );
     }
 
@@ -318,8 +329,10 @@ async function processNextChunk(): Promise<void> {
         const currentState = upload.state.getValue();
         const newWorking = currentState.working.filter((p) => p !== task.part);
 
-        // Retry if we haven't exceeded the retry limit
-        if (task.retries < _config.retries) {
+        // Retry if the failure is transient and we have attempts left. A
+        // rejected signature (403) never succeeds on replay; failing fast
+        // hands it back to resume, which signs the part again.
+        if (isRetryable(error) && task.retries < _config.retries) {
             const wait =
                 RETRY_DELAYS[Math.min(task.retries, RETRY_DELAYS.length - 1)];
             console.warn(
@@ -385,7 +398,7 @@ async function finalizeUpload(upload: Upload): Promise<void> {
                 error instanceof Error
                     ? error.message
                     : 'Unknown network error';
-            throw new Error(`Finalization request failed: ${message}`);
+            throw new UploadError(`Finalization request failed: ${message}`);
         }
 
         if (!response.ok) {
@@ -395,8 +408,10 @@ async function finalizeUpload(upload: Upload): Promise<void> {
             } catch {
                 // Ignore errors reading error body
             }
-            throw new Error(
+            throw new UploadError(
                 `Finalization request failed with status ${response.status}: ${errorBody || response.statusText}`,
+                response.status,
+                errorBody,
             );
         }
     }
@@ -479,7 +494,17 @@ async function processDirectUpload(
         });
 
         if (!response.ok) {
-            throw new Error(`Upload failed with status ${response.status}`);
+            let errorBody = '';
+            try {
+                errorBody = await response.text();
+            } catch {
+                // Ignore errors reading error body
+            }
+            throw new UploadError(
+                `Upload failed with status ${response.status}: ${errorBody || response.statusText}`,
+                response.status,
+                errorBody,
+            );
         }
 
         console.debug(
@@ -510,8 +535,8 @@ async function processDirectUpload(
             }
         }
     } catch (error) {
-        // Retry if we haven't exceeded the retry limit
-        if (retries < _config.retries) {
+        // Retry if the failure is transient and we have attempts left
+        if (isRetryable(error) && retries < _config.retries) {
             const wait =
                 RETRY_DELAYS[Math.min(retries, RETRY_DELAYS.length - 1)];
             console.warn(
