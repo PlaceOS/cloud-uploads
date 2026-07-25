@@ -5,6 +5,7 @@ import {
     hexToBinary,
     MD5_WORKER_URL,
     nextHashWorker,
+    setApiRetries,
     setAppKey,
     setToken,
     setupHashWorkers,
@@ -48,6 +49,8 @@ export interface UploadState {
     pending_complete: number[];
     working: number[];
     progress: number;
+    /** Reason the upload failed, set whenever `status` is `FAILED` */
+    error?: string;
 }
 
 export interface UploadOptions {
@@ -79,6 +82,7 @@ export function initUploads(options: UploadConfig = {}) {
     } else if (token) {
         setToken(token);
     }
+    setApiRetries(retries);
 
     // Configure manager settings
     configureUploadManager({

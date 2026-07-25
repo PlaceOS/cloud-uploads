@@ -1,5 +1,4 @@
-export type { UploadConfig } from './types';
-export { initUploads, uploadFile, resumeUploadFile } from './upload';
+export { UploadError } from './function';
 export {
     addUpload,
     clearUploads,
@@ -9,3 +8,12 @@ export {
     removeUpload,
     resumeUpload,
 } from './manager';
+export type { UploadConfig } from './types';
+export {
+    initUploads,
+    resumeUploadFile,
+    uploadFile,
+    type Upload,
+    type UploadOptions,
+    type UploadState,
+} from './upload';

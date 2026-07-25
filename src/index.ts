@@ -16,7 +16,17 @@ export { hexToBinary, humanReadableByteCount, toQueryString } from './helpers';
 export { SignedRequest } from './signed-request';
 export { Upload, type UploadState, type UploadStatus } from './upload';
 
-export { initUploads, uploadFile, type UploadConfig } from './new';
+// Aliased because the legacy `Upload`/`UploadState` exports above describe a
+// different, incompatible shape.
+export {
+    UploadError,
+    initUploads,
+    uploadFile,
+    type Upload as ChunkedUpload,
+    type UploadOptions as ChunkedUploadOptions,
+    type UploadState as ChunkedUploadState,
+    type UploadConfig,
+} from './new';
 
 /* istanbul ignore file */
 

@@ -28,10 +28,16 @@ interface ManagerConfig {
     remove_after_ms: number;
 }
 
+/** Backoff between retries of a failed chunk, in milliseconds */
+const RETRY_DELAYS = [300, 900, 2700];
+
 let _upload_list: Upload[] = [];
 let _chunk_queue: ChunkTask[] = [];
 let _active_chunks = 0;
-let _active_uploads = 0;
+// Tracked by ID rather than as a count so releasing a slot is idempotent. A
+// bare counter leaked a slot on every path that forgot to decrement, and once
+// the count reached `simultaneous` no further upload could ever start.
+let _active_upload_ids: Set<string> = new Set();
 let _paused_uploads: Set<string> = new Set();
 let _pending_uploads: Upload[] = [];
 let _removal_timers: Map<string, ReturnType<typeof setTimeout>> = new Map();
@@ -103,6 +109,78 @@ function updateState(upload: Upload, updates: Partial<UploadState>) {
     upload.state.next({ ...current, ...updates });
 }
 
+function errorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string' && error) return error;
+    return 'Unknown upload error';
+}
+
+function delay(duration: number) {
+    return new Promise((resolve) => setTimeout(resolve, duration));
+}
+
+/** Claim one of the simultaneous upload slots, if any are free */
+function acquireUploadSlot(upload: Upload): boolean {
+    if (_active_upload_ids.has(upload.id)) return true;
+    if (_active_upload_ids.size >= _config.simultaneous) return false;
+    _active_upload_ids.add(upload.id);
+    return true;
+}
+
+/** Release an upload's slot and start whatever is waiting on it */
+function releaseUploadSlot(upload_id: string) {
+    if (!_active_upload_ids.delete(upload_id)) return;
+    processNextPendingUpload();
+}
+
+/** Mark an upload as failed, recording why, and free its slot */
+function failUpload(upload: Upload, error: unknown, context: string) {
+    console.error(`[UPLOADS] ${context} for ${upload.file.name}:`, error);
+    clearHashCache(upload.id);
+    _chunk_queue = _chunk_queue.filter((task) => task.upload_id !== upload.id);
+    updateState(upload, {
+        status: 'FAILED',
+        working: [],
+        error: errorMessage(error),
+    });
+    releaseUploadSlot(upload.id);
+}
+
+/**
+ * The lowest part that still needs uploading. Parts complete out of order, so
+ * resuming from `max(completed) + 1` would strand any earlier gap and the
+ * upload could never reach its part count to finalise.
+ */
+function firstIncompletePart(upload: Upload): number {
+    const completed = new Set(upload.state.getValue().completed);
+    const total = getTotalParts(upload.file, upload.provider.part_size);
+    for (let part = 1; part <= total; part++) {
+        if (!completed.has(part)) return part;
+    }
+    return total + 1;
+}
+
+/** Start or continue the work outstanding for an upload holding a slot */
+function startUploadWork(upload: Upload) {
+    if (upload.is_direct) {
+        void processDirectUpload(upload);
+        return;
+    }
+    const next_part = firstIncompletePart(upload);
+    const total = getTotalParts(upload.file, upload.provider.part_size);
+    if (next_part > total) {
+        // Every chunk is uploaded and only finalisation is outstanding, which
+        // is the state a failed finalise leaves behind.
+        void finalizeUpload(upload).catch((error) =>
+            failUpload(upload, error, 'Finalisation failed'),
+        );
+        return;
+    }
+    void queueChunks(upload, next_part).catch((error) =>
+        failUpload(upload, error, 'Failed to queue chunks'),
+    );
+}
+
 /** Upload a single chunk to the blob storage */
 async function uploadChunk(
     signature: UploadSignature,
@@ -150,7 +228,9 @@ async function processNextChunk(): Promise<void> {
 
     const upload = getUpload(task.upload_id);
     if (!upload || _paused_uploads.has(task.upload_id)) {
-        // Upload was removed or paused, skip this chunk
+        // Upload was removed or paused; drop this chunk but keep draining the
+        // queue, otherwise chunks queued behind it stall indefinitely.
+        processNextChunk();
         return;
     }
 
@@ -230,15 +310,7 @@ async function processNextChunk(): Promise<void> {
             try {
                 await finalizeUpload(upload);
             } catch (finalizeError) {
-                // Finalization failed - mark upload as failed (no retry for finalization)
-                clearHashCache(upload.id);
-                updateState(upload, { status: 'FAILED' });
-                console.error(
-                    `[UPLOADS] Finalization failed for ${upload.file.name}:`,
-                    finalizeError,
-                );
-                _active_uploads--;
-                processNextPendingUpload();
+                failUpload(upload, finalizeError, 'Finalisation failed');
                 return;
             }
         }
@@ -248,32 +320,26 @@ async function processNextChunk(): Promise<void> {
 
         // Retry if we haven't exceeded the retry limit
         if (task.retries < _config.retries) {
+            const wait =
+                RETRY_DELAYS[Math.min(task.retries, RETRY_DELAYS.length - 1)];
             console.warn(
-                `Chunk upload failed for part ${task.part}, retrying (${task.retries + 1}/${_config.retries})...`,
-            );
-            // Re-queue the task with incremented retry count
-            _chunk_queue.push({ ...task, retries: task.retries + 1 });
-            updateState(upload, { working: newWorking });
-        } else {
-            // Mark upload as failed after exhausting retries
-            clearHashCache(upload.id);
-            updateState(upload, {
-                status: 'FAILED',
-                working: newWorking,
-            });
-            console.error(
-                `Chunk upload failed for part ${task.part} after ${_config.retries} retries:`,
+                `Chunk upload failed for part ${task.part}, retrying in ${wait}ms (${task.retries + 1}/${_config.retries})...`,
                 error,
             );
-
-            // Remove remaining chunks for this upload from the queue
-            _chunk_queue = _chunk_queue.filter(
-                (t) => t.upload_id !== upload.id,
+            updateState(upload, { working: newWorking });
+            // Backoff before re-queuing; an immediate retry just burns the
+            // budget against a server that is still failing.
+            void delay(wait).then(() => {
+                if (!getUpload(task.upload_id)) return;
+                _chunk_queue.push({ ...task, retries: task.retries + 1 });
+                processNextChunk();
+            });
+        } else {
+            failUpload(
+                upload,
+                error,
+                `Chunk ${task.part} failed after ${_config.retries} retries`,
             );
-
-            // Decrement active uploads and start next pending upload
-            _active_uploads--;
-            processNextPendingUpload();
         }
     } finally {
         _active_chunks -= 1;
@@ -344,11 +410,10 @@ async function finalizeUpload(upload: Upload): Promise<void> {
     updateState(upload, {
         status: 'COMPLETED',
         progress: 100,
+        error: undefined,
     });
 
-    // Decrement active uploads and start next pending upload
-    _active_uploads--;
-    processNextPendingUpload();
+    releaseUploadSlot(upload.id);
 
     // Handle auto-removal
     if (_config.auto_remove) {
@@ -370,27 +435,20 @@ async function finalizeUpload(upload: Upload): Promise<void> {
 function processNextPendingUpload(): void {
     if (
         _pending_uploads.length === 0 ||
-        _active_uploads >= _config.simultaneous
+        _active_upload_ids.size >= _config.simultaneous
     ) {
         return;
     }
 
     const pending = _pending_uploads.shift();
     if (!pending) return;
-
-    _active_uploads++;
-
-    // Handle direct vs chunked uploads
-    if (pending.is_direct) {
-        void processDirectUpload(pending);
-    } else {
-        void queueChunks(pending).catch((err) => {
-            console.error(`[UPLOADS] Failed to queue chunks:`, err);
-            clearHashCache(pending.id);
-            updateState(pending, { status: 'FAILED' });
-            _active_uploads--;
-        });
+    if (!acquireUploadSlot(pending)) {
+        _pending_uploads.unshift(pending);
+        return;
     }
+
+    updateState(pending, { status: 'UPLOADING' });
+    startUploadWork(pending);
 }
 
 /** Process a direct (non-chunked) upload */
@@ -399,10 +457,11 @@ async function processDirectUpload(
     retries: number = 0,
 ): Promise<void> {
     if (!upload.direct_signature) {
-        console.error(`[UPLOADS] Direct upload ${upload.id} missing signature`);
-        updateState(upload, { status: 'FAILED' });
-        _active_uploads--;
-        processNextPendingUpload();
+        failUpload(
+            upload,
+            new Error(`Direct upload ${upload.id} is missing its signature`),
+            'Direct upload could not start',
+        );
         return;
     }
 
@@ -433,11 +492,10 @@ async function processDirectUpload(
         updateState(upload, {
             status: 'COMPLETED',
             progress: 100,
+            error: undefined,
         });
 
-        // Decrement active uploads and start next pending upload
-        _active_uploads--;
-        processNextPendingUpload();
+        releaseUploadSlot(upload.id);
 
         // Handle auto-removal
         if (_config.auto_remove) {
@@ -454,19 +512,21 @@ async function processDirectUpload(
     } catch (error) {
         // Retry if we haven't exceeded the retry limit
         if (retries < _config.retries) {
+            const wait =
+                RETRY_DELAYS[Math.min(retries, RETRY_DELAYS.length - 1)];
             console.warn(
-                `[UPLOADS] Direct upload failed for ${upload.file.name}, retrying (${retries + 1}/${_config.retries})...`,
-            );
-            processDirectUpload(upload, retries + 1);
-        } else {
-            console.error(
-                `[UPLOADS] Direct upload failed for ${upload.file.name} after ${_config.retries} retries:`,
+                `[UPLOADS] Direct upload failed for ${upload.file.name}, retrying in ${wait}ms (${retries + 1}/${_config.retries})...`,
                 error,
             );
-            clearHashCache(upload.id);
-            updateState(upload, { status: 'FAILED' });
-            _active_uploads--;
-            processNextPendingUpload();
+            await delay(wait);
+            if (!getUpload(upload.id) || _paused_uploads.has(upload.id)) return;
+            await processDirectUpload(upload, retries + 1);
+        } else {
+            failUpload(
+                upload,
+                error,
+                `Direct upload failed after ${_config.retries} retries`,
+            );
         }
     }
 }
@@ -592,13 +652,12 @@ export function addUpload(upload: Upload, completedParts: number[] = []) {
         }
 
         // Check if we're at the simultaneous upload limit
-        if (_active_uploads >= _config.simultaneous) {
+        if (!acquireUploadSlot(upload)) {
             _pending_uploads.push(upload);
             updateState(upload, { status: 'PAUSED' });
             return;
         }
 
-        _active_uploads++;
         void processDirectUpload(upload);
         return;
     }
@@ -625,27 +684,18 @@ export function addUpload(upload: Upload, completedParts: number[] = []) {
     console.debug(`[UPLOADS] Staring upload (${upload.file.name})...`);
 
     // Check if we're at the simultaneous upload limit
-    if (_active_uploads >= _config.simultaneous) {
+    if (!acquireUploadSlot(upload)) {
         // Queue this upload for later
         _pending_uploads.push(upload);
         updateState(upload, { status: 'PAUSED' });
         return;
     }
 
-    _active_uploads++;
     console.debug(
         `[UPLOADS] Queuing chunks to upload (${upload.file.name})...`,
     );
 
-    // Queue remaining chunks starting from the first incomplete part
-    const startPart =
-        sortedCompleted.length > 0 ? Math.max(...sortedCompleted) + 1 : 1;
-    void queueChunks(upload, startPart).catch((err) => {
-        console.error(`[UPLOADS] Failed to queue chunks:`, err);
-        clearHashCache(upload.id);
-        updateState(upload, { status: 'FAILED' });
-        _active_uploads--;
-    });
+    startUploadWork(upload);
 }
 
 /** Get an upload by ID */
@@ -667,7 +717,7 @@ export function clearUploads() {
     _pending_uploads = [];
     _paused_uploads.clear();
     _active_chunks = 0;
-    _active_uploads = 0;
+    _active_upload_ids.clear();
 }
 
 /** Pause an upload */
@@ -681,6 +731,9 @@ export function pauseUpload(id: string) {
     _chunk_queue = _chunk_queue.filter((task) => task.upload_id !== id);
 
     updateState(upload, { status: 'PAUSED' });
+    // Free the slot while paused so other queued uploads can run; resuming
+    // claims a slot again.
+    releaseUploadSlot(id);
 }
 
 /** Resume a paused upload */
@@ -688,30 +741,23 @@ export function resumeUpload(id: string) {
     const upload = getUpload(id);
     if (!upload) return;
 
+    // Already running, so there is nothing to restart and taking a second slot
+    // would leak one.
+    if (upload.state.getValue().status === 'UPLOADING') return;
+
     _paused_uploads.delete(id);
 
     // Check if we're at the simultaneous upload limit
-    if (_active_uploads >= _config.simultaneous) {
-        _pending_uploads.push(upload);
+    if (!acquireUploadSlot(upload)) {
+        if (!_pending_uploads.some((pending) => pending.id === id)) {
+            _pending_uploads.push(upload);
+        }
+        updateState(upload, { status: 'PAUSED' });
         return;
     }
 
-    _active_uploads++;
-
-    // Handle direct vs chunked uploads
-    if (upload.is_direct) {
-        void processDirectUpload(upload);
-    } else {
-        const state = upload.state.getValue();
-        const nextPart =
-            state.completed.length > 0 ? Math.max(...state.completed) + 1 : 1;
-        void queueChunks(upload, nextPart).catch((err) => {
-            console.error(`[UPLOADS] Failed to queue chunks:`, err);
-            clearHashCache(upload.id);
-            updateState(upload, { status: 'FAILED' });
-            _active_uploads--;
-        });
-    }
+    updateState(upload, { status: 'UPLOADING', error: undefined });
+    startUploadWork(upload);
 }
 
 /** Get all uploads */
@@ -736,4 +782,6 @@ export function removeUpload(id: string) {
     _pending_uploads = _pending_uploads.filter((upload) => upload.id !== id);
     _upload_list = _upload_list.filter((upload) => upload.id !== id);
     _paused_uploads.delete(id);
+    // Hand the slot back, otherwise removing an in-flight upload strands it
+    releaseUploadSlot(id);
 }

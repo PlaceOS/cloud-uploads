@@ -63,10 +63,17 @@ export interface UploadConfig {
     parallel?: number;
     /** Number of times to retry chunk uploads before setting as failed. Defaults to `3` */
     retries?: number;
-    /** Authorization token to apply to PlaceOS endpoint calls */
-    token?: string;
-    /** API key to apply to PlaceOS API endpoint calls */
-    api_key?: string;
+    /**
+     * Authorization token to apply to PlaceOS endpoint calls. Pass a function
+     * to have the credential resolved per request, so uploads that outlive the
+     * current token pick up a refreshed one instead of failing with a 401.
+     */
+    token?: string | (() => string);
+    /**
+     * API key to apply to PlaceOS API endpoint calls. Pass a function to have
+     * the credential resolved per request.
+     */
+    api_key?: string | (() => string);
     /** Custom endpoint to apply to PlaceOS API calls */
     endpoint?: string;
     /** URL or path to the hash worker JS file */
