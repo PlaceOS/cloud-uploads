@@ -5,8 +5,10 @@ name: Release
 # Controls when the action will run. Triggers the workflow on push or pull request
 # events but only for the master branch
 on:
+    workflow_dispatch:
     push:
-        branches: [develop]
+        branches:
+            - develop
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
@@ -14,31 +16,27 @@ jobs:
     build:
         # The type of runner that the job will run on
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            issues: write
+            pull-requests: write
+            id-token: write
 
         # Steps represent a sequence of tasks that will be executed as part of the job
         steps:
             # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
             - uses: actions/checkout@v4
-
-            - name: Cache node modules
-              id: cache
-              uses: actions/cache@v4
               with:
-                  path: node_modules
-                  key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-                  restore-keys: |
-                      ${{ runner.os }}-build-${{ env.cache-name }}-
-                      ${{ runner.os }}-build-
-                      ${{ runner.os }}-
+                  fetch-depth: 0
 
             - name: Setup Node.js environment
               uses: actions/setup-node@v4
               with:
-                  node-version: '24'
+                  node-version: '24.10'
+                  cache: npm
 
             - name: NPM install
-              if: steps.cache.outputs.cache-hit != 'true'
-              run: npm install
+              run: npm ci
 
             - name: Test Library
               run: npm run test
@@ -52,7 +50,6 @@ jobs:
             - name: Update application version
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
               run: npm run semantic-release
 
             - name: Publish generated content to GitHub Pages
